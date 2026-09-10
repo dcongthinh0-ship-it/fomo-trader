@@ -126,3 +126,13 @@ async def test_v3_execution_fails_closed_until_fork_validated(db):
     instance = adapter(db)
     with pytest.raises(ExecutionFailure, match='V3_EXECUTION_NOT_FORK_VALIDATED'):
         await instance.quote_buy(signal(), {'version': 'v3'}, Decimal('1'))
+
+
+async def test_usd_buy_approves_only_exact_input_amount(db):
+    instance = adapter(db, mode='USD')
+    instance._allowance = AsyncMock(return_value=0)
+    instance._approve_exact = AsyncMock()
+    instance._base_transaction = AsyncMock(return_value={'nonce': 1})
+    await instance.build_buy_transaction(signal(), {'version': 'v2', 'router': V2_ROUTER},
+                                         Decimal('6'), Decimal('123'))
+    instance._approve_exact.assert_awaited_once_with('e', INPUT, V2_ROUTER, 6_000_000)

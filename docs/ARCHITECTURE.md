@@ -3,7 +3,7 @@
 ## 当前同步状态
 
 - 日期：2026-09-10
-- 状态：完成 HMAC 接收、SQLite 幂等、状态机、V2 直接交易实现及 V2/V3/V4 链上池识别；V3/V4 执行在 fork 验证前 fail-closed，实盘默认关闭。
+- 状态：Python 3.12 slim-bookworm 非 root 容器、私网部署与运维文档已加入；HMAC/SQLite/状态机/V2 实现齐备，实盘默认关闭。
 
 ## 边界与数据流
 
@@ -29,11 +29,11 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 ## 不可破坏约束
 
 1. `LIVE_TRADING_ENABLED=false` 是默认值；未授权不得广播。
-2. 同一 event 最多一个 BUY 与一个 SELL；超时/重启先查 receipt 和 nonce，不能重买。
+2. 同一 event 最多一个 BUY 与一个 SELL；签名前即保存唯一订单，签名后、广播前先持久化 tx hash/nonce；超时或重启只按 receipt 恢复，不能重买。
 3. 目标固定为 `actual_cost × 1.30`，gas 不计入成本；只卖 100%，不含止损或其他策略。
 4. 市值与流动性只来自信号且不在本服务重查；链上池/路由核验不是新入场条件。
 5. V4 pool id 是 32 字节标识，绝不能当合约地址调用。
-6. 私钥和共享密钥只从只读文件读取，健康接口与日志不泄露任何密钥或完整 RPC URL。
+6. 私钥和共享密钥只从只读文件读取，且被 Git/Docker build context 排除；健康接口与日志不泄露任何密钥或完整 RPC URL。
 
 ## 数据状态
 

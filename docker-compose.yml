@@ -1,0 +1,53 @@
+services:
+  fomo-trader:
+    build: .
+    image: fomo-trader:local
+    container_name: fomo-trader
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/trader.db
+      CONFIG_PATH: /app/config/trading.yaml
+      SIGNAL_SHARED_SECRET_FILE: /run/secrets/fomo_trader_shared_secret
+      LIVE_TRADING_ENABLED: ${LIVE_TRADING_ENABLED:-false}
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUNBUFFERED: '1'
+    volumes:
+      - trader-data:/app/data
+      - ./config:/app/config:ro
+      - ${FOMO_TRADER_SHARED_SECRET_HOST_FILE:-./secrets/fomo_trader_shared_secret}:/run/secrets/fomo_trader_shared_secret:ro
+    expose:
+      - '8090'
+    networks:
+      - fomo-private
+    cpus: 0.5
+    mem_limit: 384m
+    memswap_limit: 384m
+    pids_limit: 64
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8090/health", timeout=5)']
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+volumes:
+  trader-data:
+    name: fomo-trader-data
+
+networks:
+  fomo-private:
+    external: true
+    name: fomo-private

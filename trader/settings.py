@@ -56,9 +56,10 @@ class Settings:
         for value in (self.buy_slippage_bps, self.sell_slippage_bps):
             if not 0 <= value < 10000:
                 raise ValueError('slippage bps must be in [0,10000)')
-        self.buy_asset_address = os.getenv('BUY_ASSET_ADDRESS', '').lower()
-        self.buy_asset_decimals = int(os.getenv('BUY_ASSET_DECIMALS', '18'))
-        self.buy_asset_symbol = os.getenv('BUY_ASSET_SYMBOL', 'ETH')
+        default_asset = self.config.get('contracts', {}).get('usdg', '') if self.amount_mode == 'USD' else ''
+        self.buy_asset_address = os.getenv('BUY_ASSET_ADDRESS', default_asset).lower()
+        self.buy_asset_decimals = int(os.getenv('BUY_ASSET_DECIMALS', '6' if self.amount_mode == 'USD' else '18'))
+        self.buy_asset_symbol = os.getenv('BUY_ASSET_SYMBOL', 'USDG' if self.amount_mode == 'USD' else 'ETH')
         if self.amount_mode not in ('ETH', 'USD'):
             raise ValueError('BUY_AMOUNT_MODE must be ETH or USD')
         if self.amount_mode == 'USD' and not re.fullmatch(r'0x[0-9a-f]{40}', self.buy_asset_address):

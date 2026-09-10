@@ -8,8 +8,8 @@ from trader.nonce import NonceManager
 from trader.worker import TradingWorker
 
 
-def worker_settings(live=True, max_sell_attempts=3):
-    return SimpleNamespace(live=live, amount=Decimal('10'), amount_mode='USD',
+def worker_settings(live=True, max_sell_attempts=3, amount='10'):
+    return SimpleNamespace(live=live, amount=Decimal(amount), amount_mode='USD',
                            buy_slippage_bps=500, sell_slippage_bps=500,
                            wallet_address='0x' + '1' * 40, max_sell_attempts=max_sell_attempts,
                            price_poll_seconds=1)
@@ -72,6 +72,27 @@ async def test_buy_failure_is_terminal_and_not_retried(db, valid_payload):
     assert db.conn.execute("SELECT count(*) FROM orders WHERE side='BUY'").fetchone()[0] == 1
 
 
+async def test_reverted_buy_receipt_never_creates_open_position(db, valid_payload):
+    accept(db, valid_payload)
+    worker = TradingWorker(db, FakeExecutionAdapter(fail_buy='receipt'), worker_settings())
+    assert await worker.buy_once(now=101)
+    assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'BUY_FAILED'
+    assert db.conn.execute('SELECT count(*) FROM positions').fetchone()[0] == 0
+
+
+async def test_receipt_timeout_recovers_without_second_buy(db, valid_payload):
+    accept(db, valid_payload)
+    first = TradingWorker(db, FakeExecutionAdapter(fail_buy='timeout'), worker_settings())
+    assert await first.buy_once(now=101)
+    assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'BUY_SUBMITTED'
+    assert db.conn.execute("SELECT count(*) FROM orders WHERE side='BUY'").fetchone()[0] == 1
+    restarted = TradingWorker(db, FakeExecutionAdapter(buy_received=Decimal('77')), worker_settings())
+    assert await restarted.buy_once(now=102)
+    assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'OPEN'
+    assert db.conn.execute('SELECT token_quantity FROM positions').fetchone()[0] == '77'
+    assert db.conn.execute("SELECT count(*) FROM orders WHERE side='BUY'").fetchone()[0] == 1
+
+
 async def test_sell_failure_keeps_open_then_marks_stuck(db, valid_payload):
     accept(db, valid_payload)
     adapter = FakeExecutionAdapter(fail_sell='quote')
@@ -82,6 +103,30 @@ async def test_sell_failure_keeps_open_then_marks_stuck(db, valid_payload):
     assert await worker.sell_once(now=103)
     assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'POSITION_STUCK'
     assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'POSITION_STUCK'
+
+
+async def test_reverted_sell_receipt_does_not_close_position(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('13'), fail_sell='receipt')
+    worker = TradingWorker(db, adapter, worker_settings())
+    await worker.buy_once(now=101)
+    await worker.sell_once(now=102)
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'OPEN'
+    assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'OPEN'
+
+
+async def test_six_usd_buys_then_exactly_7_8_sells_full_position(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(buy_received=Decimal('600'), sell_quote=Decimal('7.8'))
+    first = TradingWorker(db, adapter, worker_settings(amount='6'))
+    await first.buy_once(now=101)
+    position = db.conn.execute('SELECT * FROM positions').fetchone()
+    assert position['target_proceeds'] == '7.80'
+    restarted = TradingWorker(db, adapter, worker_settings(amount='6'))
+    assert await restarted.sell_once(now=102)
+    sell = db.conn.execute("SELECT * FROM orders WHERE side='SELL'").fetchone()
+    assert sell['input_amount'] == position['token_quantity'] == '600'
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'CLOSED'
 
 
 async def test_nonce_uses_max_of_chain_and_persisted_value(db):

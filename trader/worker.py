@@ -23,6 +23,11 @@ class TradingWorker:
 
     async def buy_once(self, now=None):
         now = int(now or time.time())
+        recovering = self.db.conn.execute(
+            "SELECT event_id FROM signals WHERE status IN ('BUY_PENDING','BUY_SUBMITTED') "
+            'ORDER BY received_at LIMIT 1').fetchone()
+        if recovering:
+            return await self.recover_submitted(recovering['event_id'], 'BUY')
         row = self.db.conn.execute("SELECT * FROM signals WHERE status='RECEIVED' ORDER BY received_at LIMIT 1").fetchone()
         if not row or not self.settings.live:
             return False
@@ -72,6 +77,11 @@ class TradingWorker:
             with self.db.conn:
                 self.db.conn.execute("UPDATE signals SET status='BUY_SUBMITTED',last_error=? WHERE event_id=?",
                                      (exc.code, signal.event_id))
+        except TimeoutError:
+            update_order(self.db, signal.event_id, 'BUY', 'UNKNOWN', now, error_code='RECEIPT_PENDING')
+            with self.db.conn:
+                self.db.conn.execute("UPDATE signals SET status='BUY_SUBMITTED',last_error='RECEIPT_PENDING' "
+                                     'WHERE event_id=?', (signal.event_id,))
         except ExecutionFailure as exc:
             status = 'REVERTED' if exc.code == 'BUY_REVERTED' else 'FAILED'
             if self.db.conn.execute("SELECT 1 FROM orders WHERE event_id=? AND side='BUY'",
@@ -85,7 +95,7 @@ class TradingWorker:
 
     async def recover_submitted(self, event_id, side):
         order = self.db.conn.execute('SELECT * FROM orders WHERE event_id=? AND side=?', (event_id, side)).fetchone()
-        if not order or not order['tx_hash'] or order['status'] not in ('SUBMITTED', 'UNKNOWN'):
+        if not order or not order['tx_hash'] or order['status'] not in ('SIGNED', 'SUBMITTED', 'UNKNOWN'):
             return False
         receipt = await self.adapter.receipt_by_hash(order['tx_hash'])
         if not receipt:
@@ -95,12 +105,39 @@ class TradingWorker:
             with self.db.conn:
                 self.db.conn.execute('UPDATE signals SET status=?,last_error=? WHERE event_id=?',
                                      ('BUY_FAILED' if side == 'BUY' else 'OPEN', f'{side}_REVERTED', event_id))
+            return True
+        if side == 'BUY':
+            signal_row = self.db.conn.execute('SELECT * FROM signals WHERE event_id=?', (event_id,)).fetchone()
+            signal = self._signal(signal_row)
+            quantity = Decimal(str(self.adapter.parse_actual_token_received(
+                receipt, signal.token_address, getattr(self.settings, 'wallet_address', ''))))
+            if quantity <= 0:
+                return False
+            update_order(self.db, event_id, 'BUY', 'CONFIRMED', actual_output=str(quantity))
+            open_position(self.db, event_id, signal.token_address, self.settings.amount_mode,
+                          self.settings.amount, quantity, order['tx_hash'])
+            with self.db.conn:
+                self.db.conn.execute("UPDATE signals SET status='OPEN',last_error=NULL WHERE event_id=?", (event_id,))
+        else:
+            position = self.db.conn.execute('SELECT * FROM positions WHERE event_id=?', (event_id,)).fetchone()
+            if not position:
+                return False
+            proceeds = self.adapter.parse_actual_sell_proceeds(receipt, dict(position))
+            update_order(self.db, event_id, 'SELL', 'CONFIRMED', actual_output=str(proceeds))
+            close_position(self.db, event_id, order['tx_hash'])
+            with self.db.conn:
+                self.db.conn.execute("UPDATE signals SET status='CLOSED',last_error=NULL WHERE event_id=?", (event_id,))
         return True
 
     async def sell_once(self, now=None):
         now = int(now or time.time())
         if not self.settings.live:
             return False
+        recovering = self.db.conn.execute(
+            "SELECT event_id FROM signals WHERE status IN ('SELL_PENDING','SELL_SUBMITTED') "
+            'ORDER BY received_at LIMIT 1').fetchone()
+        if recovering:
+            return await self.recover_submitted(recovering['event_id'], 'SELL')
         position = self.db.conn.execute("SELECT * FROM positions WHERE status='OPEN' ORDER BY opened_at LIMIT 1").fetchone()
         if not position:
             return False
@@ -151,6 +188,11 @@ class TradingWorker:
             with self.db.conn:
                 self.db.conn.execute('UPDATE signals SET status=?,last_error=? WHERE event_id=?',
                                      (signal_status, exc.code, position['event_id']))
+        except TimeoutError:
+            update_order(self.db, position['event_id'], 'SELL', 'UNKNOWN', now, error_code='RECEIPT_PENDING')
+            with self.db.conn:
+                self.db.conn.execute("UPDATE signals SET status='SELL_SUBMITTED',last_error='RECEIPT_PENDING' "
+                                     'WHERE event_id=?', (position['event_id'],))
         return True
 
     async def run(self):

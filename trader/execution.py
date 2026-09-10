@@ -57,6 +57,10 @@ class FakeExecutionAdapter:
         return {'tx_hash': '0x' + 'a' * 64, 'nonce': transaction['nonce']}
 
     async def wait_for_receipt(self, tx_hash):
+        if self.fail_buy == 'timeout' and tx_hash.endswith('a' * 64):
+            raise TimeoutError('RECEIPT_TIMEOUT')
+        if self.fail_sell == 'timeout' and tx_hash.endswith('b' * 64):
+            raise TimeoutError('RECEIPT_TIMEOUT')
         if self.fail_buy == 'receipt' and tx_hash.endswith('a' * 64):
             return {'status': '0x0', 'transactionHash': tx_hash}
         if self.fail_sell == 'receipt' and tx_hash.endswith('b' * 64):
@@ -90,4 +94,4 @@ class FakeExecutionAdapter:
         return self.sell_received
 
     async def receipt_by_hash(self, tx_hash):
-        return await self.wait_for_receipt(tx_hash)
+        return {'status': '0x1', 'transactionHash': tx_hash}

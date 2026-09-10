@@ -80,7 +80,9 @@ class UniswapRobinhoodExecutionAdapter:
                             ['uint256', 'address[]', 'address', 'uint256'],
                             [int(minimum), [self.input_asset, signal.token_address],
                              self.settings.wallet_address, deadline])
-            return await self._base_transaction(router, data, value)
+            tx = await self._base_transaction(router, data, value)
+            tx.update(_event_id=signal.event_id, _side='BUY')
+            return tx
         value = raw_amount(amount, self.settings.buy_asset_decimals)
         if await self._allowance(self.input_asset, router) < value:
             await self._approve_exact(signal.event_id, self.input_asset, router, value)
@@ -88,11 +90,19 @@ class UniswapRobinhoodExecutionAdapter:
             'swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)',
             ['uint256', 'uint256', 'address[]', 'address', 'uint256'],
             [value, int(minimum), [self.input_asset, signal.token_address], self.settings.wallet_address, deadline])
-        return await self._base_transaction(router, data)
+        tx = await self._base_transaction(router, data)
+        tx.update(_event_id=signal.event_id, _side='BUY')
+        return tx
 
     async def _submit(self, transaction):
+        transaction = dict(transaction)
+        event_id, side = transaction.pop('_event_id', None), transaction.pop('_side', None)
         signed = Account.sign_transaction(transaction, self.settings.private_key())
         tx_hash, nonce = signed.hash.hex(), transaction['nonce']
+        if event_id and side in ('BUY', 'SELL'):
+            from .orders import update_order
+            update_order(self.db, event_id, side, 'SIGNED', tx_hash=tx_hash, nonce=nonce)
+            attempt(self.db, event_id, side, 'SIGNED', tx_hash=tx_hash, nonce=nonce)
         try:
             returned = await self.rpc.send_raw_transaction('0x' + signed.raw_transaction.hex())
             if returned.lower().removeprefix('0x') != tx_hash.lower().removeprefix('0x'):
@@ -181,7 +191,9 @@ class UniswapRobinhoodExecutionAdapter:
         data = calldata(name, ['uint256', 'uint256', 'address[]', 'address', 'uint256'],
                         [amount, min_raw, [position['token_address'], self.input_asset],
                          self.settings.wallet_address, deadline])
-        return await self._base_transaction(pool['router'], data)
+        tx = await self._base_transaction(pool['router'], data)
+        tx.update(_event_id=position['event_id'], _side='SELL')
+        return tx
 
     def parse_actual_sell_proceeds(self, receipt, position):
         pool = self.pools.get(position['event_id'])
