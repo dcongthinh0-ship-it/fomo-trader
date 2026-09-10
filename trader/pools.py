@@ -51,9 +51,11 @@ class PoolResolver:
             return await self._resolve_v4(signal, hint, snapshot.get('pool_key'))
         token0 = word_address(await self._call(hint, 'token0()'))
         token1 = word_address(await self._call(hint, 'token1()'))
-        if {token0, token1} != {signal.token_address.lower(), self.input_asset}:
+        if signal.token_address.lower() not in {token0, token1}:
             raise ExecutionFailure('POOL_ASSET_MISMATCH')
-        result = {'version': version, 'address': hint.lower(), 'token0': token0, 'token1': token1}
+        other = token1 if token0 == signal.token_address.lower() else token0
+        result = {'version': version, 'address': hint.lower(), 'token0': token0, 'token1': token1,
+                  'route_asset': other}
         if version == 'v2':
             reserves = await self._call(hint, 'getReserves()')
             reserve0, reserve1, _ = decode(['uint112', 'uint112', 'uint32'], bytes.fromhex(reserves[2:]))
@@ -61,11 +63,32 @@ class PoolResolver:
                 raise ExecutionFailure('POOL_HAS_NO_RESERVES')
             result.update(factory=self.contracts['v2_factory'], router=self.contracts['v2_router'],
                           reserves=(reserve0, reserve1))
+            if other == self.input_asset:
+                path = [self.input_asset, signal.token_address.lower()]
+            else:
+                bridge_raw = await self._call(self.contracts['v2_factory'], 'getPair(address,address)',
+                                              ['address', 'address'], [self.input_asset, other])
+                bridge = word_address(bridge_raw)
+                if bridge == '0x' + '0' * 40 or await self.rpc.get_code(bridge) in ('0x', '0x0', None):
+                    raise ExecutionFailure('ROUTE_NOT_FOUND')
+                if word_address(await self._call(bridge, 'factory()')) != self.contracts['v2_factory']:
+                    raise ExecutionFailure('UNVERIFIED_ROUTE_FACTORY')
+                bridge_reserves = await self._call(bridge, 'getReserves()')
+                left, right, _ = decode(['uint112', 'uint112', 'uint32'], bytes.fromhex(bridge_reserves[2:]))
+                if left == 0 or right == 0:
+                    raise ExecutionFailure('ROUTE_HAS_NO_RESERVES')
+                result['bridge_pair'] = bridge
+                path = [self.input_asset, other, signal.token_address.lower()]
+            result.update(path_buy=path, path_sell=list(reversed(path)))
         else:
             fee = decode(['uint24'], bytes.fromhex((await self._call(hint, 'fee()'))[2:]))[0]
             spacing = decode(['int24'], bytes.fromhex((await self._call(hint, 'tickSpacing()'))[2:]))[0]
             result.update(factory=self.contracts['v3_factory'], router=self.contracts['v3_router'],
                           quoter=self.contracts['v3_quoter'], fee=fee, tick_spacing=spacing)
+            if other != self.input_asset:
+                raise ExecutionFailure('V3_MULTIHOP_NOT_FORK_VALIDATED')
+            result.update(path_buy=[self.input_asset, signal.token_address.lower()],
+                          path_sell=[signal.token_address.lower(), self.input_asset])
         return result
 
     async def _resolve_v4(self, signal, pool_id, key):

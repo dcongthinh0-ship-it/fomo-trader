@@ -9,7 +9,7 @@
 - 固定 30% 目标、低于目标不卖、FakeExecutionAdapter 买卖闭环、买卖失败状态。
 - nonce 取链上 pending 与本地保留值的较大者及重启 reconcile。
 - receipt 超时后保留 tx hash，重启只查原交易并恢复建仓，不创建第二笔 BUY。
-- V2/V3 池官方 Factory、资产与参数识别；V4 pool id 不作为地址调用。
+- V2/V3 池官方 Factory、资产与参数识别，V2 直连/单桥路径；V4 pool id 不作为地址调用。
 - 精确金额换算、非零最小输出、receipt Transfer 解析。
 - 默认 live=false，以及随机测试密钥的地址匹配/不匹配启动校验；测试密钥不进入 Git。
 

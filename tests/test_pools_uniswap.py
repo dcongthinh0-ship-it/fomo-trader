@@ -36,8 +36,9 @@ def contracts():
 
 
 class FakeRPC:
-    def __init__(self, factory=V2_FACTORY):
+    def __init__(self, factory=V2_FACTORY, token1=INPUT):
         self.factory = factory
+        self.token1 = token1
         self.code_calls = []
 
     async def get_code(self, address):
@@ -51,7 +52,9 @@ class FakeRPC:
         if method == '0x' + selector('token0()').hex():
             return encoded(['address'], [TOKEN])
         if method == '0x' + selector('token1()').hex():
-            return encoded(['address'], [INPUT])
+            return encoded(['address'], [self.token1])
+        if method == '0x' + selector('getPair(address,address)').hex():
+            return encoded(['address'], ['0x' + 'e' * 40])
         if method == '0x' + selector('getReserves()').hex():
             return encoded(['uint112', 'uint112', 'uint32'], [100, 200, 1])
         if method == '0x' + selector('fee()').hex():
@@ -79,6 +82,14 @@ async def test_v3_pool_reads_fee_and_tick_spacing():
     result = await PoolResolver(FakeRPC(V3_FACTORY), contracts(), INPUT).resolve_pool(signal())
     assert result['version'] == 'v3'
     assert result['fee'] == 3000 and result['tick_spacing'] == 60
+
+
+async def test_v2_pool_can_use_verified_single_bridge_route():
+    other = '0x' + 'd' * 40
+    result = await PoolResolver(FakeRPC(token1=other), contracts(), INPUT).resolve_pool(signal())
+    assert result['path_buy'] == [INPUT, other, TOKEN]
+    assert result['path_sell'] == [TOKEN, other, INPUT]
+    assert result['bridge_pair'] == '0x' + 'e' * 40
 
 
 async def test_unverified_factory_is_rejected():
@@ -133,6 +144,7 @@ async def test_usd_buy_approves_only_exact_input_amount(db):
     instance._allowance = AsyncMock(return_value=0)
     instance._approve_exact = AsyncMock()
     instance._base_transaction = AsyncMock(return_value={'nonce': 1})
-    await instance.build_buy_transaction(signal(), {'version': 'v2', 'router': V2_ROUTER},
+    await instance.build_buy_transaction(signal(), {'version': 'v2', 'router': V2_ROUTER,
+                                                    'path_buy': [INPUT, TOKEN]},
                                          Decimal('6'), Decimal('123'))
     instance._approve_exact.assert_awaited_once_with('e', INPUT, V2_ROUTER, 6_000_000)

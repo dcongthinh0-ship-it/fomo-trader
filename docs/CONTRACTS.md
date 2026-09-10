@@ -27,7 +27,7 @@
 
 ## 代码支持状态
 
-- V2：已实现 Factory/token0/token1/reserves 核对、精确输入报价、ETH 或指定 ERC-20 买卖 calldata、非零 `amountOutMin`、精确额度 approval、本地签名、广播不确定性和 receipt 日志解析。仅待 fork 闭环后才可实盘。
+- V2：已实现 Factory/token0/token1/reserves 核对、买入资产直连或同一官方 Factory 单桥路由、精确输入报价、ETH/指定 ERC-20 买卖 calldata、非零 `amountOutMin`、精确额度 approval、本地签名、广播不确定性和 receipt 日志解析。仅待 fork 闭环后才可实盘。
 - V3：已实现 Factory/token0/token1/fee/tickSpacing 识别；执行 fail-closed，错误码 `V3_EXECUTION_NOT_FORK_VALIDATED`。
 - V4：PoolKey 五字段与 pool id 哈希核对，且只检查官方 PoolManager/StateView/UniversalRouter；从不对 32 字节 pool id 发合约调用。执行 fail-closed，错误码 `V4_EXECUTION_NOT_FORK_VALIDATED`。
 

@@ -59,8 +59,7 @@ class UniswapRobinhoodExecutionAdapter:
         if pool['version'] != 'v2':
             raise ExecutionFailure(f'{pool["version"].upper()}_EXECUTION_NOT_FORK_VALIDATED')
         decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
-        return Decimal(await self._quote_v2(raw_amount(amount, decimals),
-                                             [self.input_asset, signal.token_address]))
+        return Decimal(await self._quote_v2(raw_amount(amount, decimals), pool['path_buy']))
 
     async def _base_transaction(self, to, data, value=0):
         nonce = await self.nonce.reserve()
@@ -78,7 +77,7 @@ class UniswapRobinhoodExecutionAdapter:
             value = raw_amount(amount, 18)
             data = calldata('swapExactETHForTokensSupportingFeeOnTransferTokens(uint256,address[],address,uint256)',
                             ['uint256', 'address[]', 'address', 'uint256'],
-                            [int(minimum), [self.input_asset, signal.token_address],
+                            [int(minimum), pool['path_buy'],
                              self.settings.wallet_address, deadline])
             tx = await self._base_transaction(router, data, value)
             tx.update(_event_id=signal.event_id, _side='BUY')
@@ -89,7 +88,7 @@ class UniswapRobinhoodExecutionAdapter:
         data = calldata(
             'swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)',
             ['uint256', 'uint256', 'address[]', 'address', 'uint256'],
-            [value, int(minimum), [self.input_asset, signal.token_address], self.settings.wallet_address, deadline])
+            [value, int(minimum), pool['path_buy'], self.settings.wallet_address, deadline])
         tx = await self._base_transaction(router, data)
         tx.update(_event_id=signal.event_id, _side='BUY')
         return tx
@@ -150,8 +149,7 @@ class UniswapRobinhoodExecutionAdapter:
         pool = await self._pool_for_position(position)
         if pool['version'] != 'v2':
             raise ExecutionFailure(f'{pool["version"].upper()}_EXECUTION_NOT_FORK_VALIDATED')
-        output = await self._quote_v2(int(Decimal(position['token_quantity'])),
-                                      [position['token_address'], self.input_asset])
+        output = await self._quote_v2(int(Decimal(position['token_quantity'])), pool['path_sell'])
         decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
         return Decimal(output) / (Decimal(10) ** decimals)
 
@@ -189,7 +187,7 @@ class UniswapRobinhoodExecutionAdapter:
                 if self.settings.amount_mode == 'ETH' else
                 'swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)')
         data = calldata(name, ['uint256', 'uint256', 'address[]', 'address', 'uint256'],
-                        [amount, min_raw, [position['token_address'], self.input_asset],
+                        [amount, min_raw, pool['path_sell'],
                          self.settings.wallet_address, deadline])
         tx = await self._base_transaction(pool['router'], data)
         tx.update(_event_id=position['event_id'], _side='SELL')
