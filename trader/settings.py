@@ -51,6 +51,8 @@ class Settings:
         self.buy_slippage_bps = int(os.getenv('BUY_MAX_SLIPPAGE_BPS', order['buy_max_slippage_bps']))
         self.sell_slippage_bps = int(os.getenv('SELL_MAX_SLIPPAGE_BPS', order['sell_max_slippage_bps']))
         self.deadline_seconds = int(os.getenv('TX_DEADLINE_SECONDS', order['tx_deadline_seconds']))
+        self.price_poll_seconds = float(order.get('price_poll_seconds', 1))
+        self.max_sell_attempts = int(order.get('max_sell_attempts', 3))
         for value in (self.buy_slippage_bps, self.sell_slippage_bps):
             if not 0 <= value < 10000:
                 raise ValueError('slippage bps must be in [0,10000)')
