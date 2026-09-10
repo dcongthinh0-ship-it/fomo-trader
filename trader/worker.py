@@ -4,6 +4,7 @@ import logging
 import time
 from decimal import Decimal
 
+from .db import dumps
 from .execution import ExecutionFailure, SubmissionUnknown
 from .models import TradeSignal
 from .orders import attempt, create_order, update_order
@@ -59,12 +60,17 @@ class TradingWorker:
                 self.db.conn.execute("UPDATE signals SET status='BUY_SUBMITTED' WHERE event_id=?", (signal.event_id,))
             receipt = await self.adapter.wait_for_receipt(result['tx_hash'])
             if int(receipt.get('status', '0x0'), 16) != 1:
+                attempt(self.db, signal.event_id, 'BUY', 'REVERTED', now,
+                        tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps(receipt),
+                        error_code='BUY_REVERTED')
                 raise ExecutionFailure('BUY_REVERTED')
             quantity = Decimal(str(self.adapter.parse_actual_token_received(
                 receipt, signal.token_address, getattr(self.settings, 'wallet_address', ''))))
             if quantity <= 0:
                 raise ExecutionFailure('ZERO_TOKEN_RECEIVED')
             update_order(self.db, signal.event_id, 'BUY', 'CONFIRMED', now, actual_output=str(quantity))
+            attempt(self.db, signal.event_id, 'BUY', 'CONFIRMED', now,
+                    tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps(receipt))
             open_position(self.db, signal.event_id, signal.token_address, self.settings.amount_mode,
                           self.settings.amount, quantity, result['tx_hash'], now)
             with self.db.conn:
@@ -164,10 +170,15 @@ class TradingWorker:
                                      (position['event_id'],))
             receipt = await self.adapter.wait_for_receipt(result['tx_hash'])
             if int(receipt.get('status', '0x0'), 16) != 1:
+                attempt(self.db, position['event_id'], 'SELL', 'REVERTED', now,
+                        tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps(receipt),
+                        error_code='SELL_REVERTED')
                 raise ExecutionFailure('SELL_REVERTED')
             proceeds = self.adapter.parse_actual_sell_proceeds(receipt, position)
             update_order(self.db, position['event_id'], 'SELL', 'CONFIRMED', now,
                          actual_output=str(proceeds))
+            attempt(self.db, position['event_id'], 'SELL', 'CONFIRMED', now,
+                    tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps(receipt))
             close_position(self.db, position['event_id'], result['tx_hash'], now)
             with self.db.conn:
                 self.db.conn.execute("UPDATE signals SET status='CLOSED',last_error=NULL WHERE event_id=?",

@@ -20,7 +20,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 
 - `settings.py`：环境/YAML、固定策略与 live 凭据闭锁。
 - `auth.py`、`models.py`、`signals.py`、`api.py`：通信认证、验证、幂等接收和健康接口。
-- `db.py`：signals/orders/positions/execution_attempts/nonce_state 持久化。
+- `db.py`：signals/orders/positions/execution_attempts/nonce_state 持久化；签名、广播、approval 与 receipt 事实分步留痕。
 - `execution.py`、`worker.py`：适配器协议和可恢复买卖状态机。
 - `rpc.py`、`nonce.py`：隔离 RPC、有限重试、nonce 协调与恢复。
 - `pools.py`、`uniswap.py`：官方部署核验、池识别、V2 直接/单桥路由、报价、交易构造、签名与 receipt 解析。

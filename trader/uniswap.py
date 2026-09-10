@@ -165,7 +165,7 @@ class UniswapRobinhoodExecutionAdapter:
         receipt = await self.wait_for_receipt(result['tx_hash'])
         status = int(receipt.get('status', '0x0'), 16)
         attempt(self.db, event_id, 'APPROVAL', 'CONFIRMED' if status == 1 else 'REVERTED',
-                tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps({'status': status}))
+                tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps(receipt))
         if status != 1:
             raise ExecutionFailure('APPROVAL_REVERTED')
 
