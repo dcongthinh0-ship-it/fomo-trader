@@ -27,4 +27,6 @@
 
 ## 本地双服务交接
 
-以独立临时 SQLite 启动 trader（`LIVE_TRADING_ENABLED=false`、Fake adapter），再由 monitor 的真实 `TradeSignalDispatcher` 发送合格事件：monitor 产生 1 条 decision 和 1 条 outbox，首次投送后状态为 `sent`；重复投送后 trader 仍只有 1 条 signal、0 条 BUY。健康接口保持 `service=ok`、`open_positions=0`。全程未启动飞书发送，也未调用主网 RPC 或广播交易。
+以独立临时 SQLite 启动 trader（`LIVE_TRADING_ENABLED=false`、Fake adapter），再由 monitor 的真实 `TradeSignalDispatcher` 发送合格事件：monitor 产生 1 条 decision 和 1 条 outbox，首次投送后状态为 `sent`；重复投送后 trader 仍只有 1 条 signal、0 条 BUY。市值 8500 的事件仍生成卡片、outbox 为 0。健康接口保持 `service=ok`、`open_positions=0`。
+
+本机回环样本中，判断完成到 outbox 写入为 `0.284 ms`，outbox 发起到 trader 持久接收为 `2.258 ms`。这是一次本地功能样本，不是生产 SLA。飞书 notifier 与 dispatcher 在代码中是两个独立 asyncio task，各自失败测试已覆盖；本次未发送任何飞书生产消息。全程未调用主网 RPC 或广播交易。

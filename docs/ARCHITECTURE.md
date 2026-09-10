@@ -44,3 +44,4 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 ## 验证
 
 测试按 auth/API、数据库幂等、池与 calldata、nonce/receipt 恢复、FakeExecutionAdapter 完整闭环和 Docker 双服务分层。测试不得访问主网、真实钱包或真实资金。
+最近一次本地双服务交接的计数与耗时记录见 `docs/VALIDATION.md`。
