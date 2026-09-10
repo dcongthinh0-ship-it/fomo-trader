@@ -128,7 +128,7 @@ class TradingWorker:
             position = self.db.conn.execute('SELECT * FROM positions WHERE event_id=?', (event_id,)).fetchone()
             if not position:
                 return False
-            proceeds = self.adapter.parse_actual_sell_proceeds(receipt, dict(position))
+            proceeds = await self.adapter.parse_actual_sell_proceeds(receipt, dict(position))
             update_order(self.db, event_id, 'SELL', 'CONFIRMED', actual_output=str(proceeds))
             close_position(self.db, event_id, order['tx_hash'])
             with self.db.conn:
@@ -174,7 +174,7 @@ class TradingWorker:
                         tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps(receipt),
                         error_code='SELL_REVERTED')
                 raise ExecutionFailure('SELL_REVERTED')
-            proceeds = self.adapter.parse_actual_sell_proceeds(receipt, position)
+            proceeds = await self.adapter.parse_actual_sell_proceeds(receipt, position)
             update_order(self.db, position['event_id'], 'SELL', 'CONFIRMED', now,
                          actual_output=str(proceeds))
             attempt(self.db, position['event_id'], 'SELL', 'CONFIRMED', now,

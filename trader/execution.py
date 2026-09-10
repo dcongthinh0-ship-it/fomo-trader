@@ -26,7 +26,7 @@ class ExecutionAdapter(Protocol):
     async def ensure_token_approval(self, position): ...
     async def build_sell_transaction(self, position, minimum): ...
     async def submit_sell(self, transaction): ...
-    def parse_actual_sell_proceeds(self, receipt, position): ...
+    async def parse_actual_sell_proceeds(self, receipt, position): ...
 
 
 @dataclass
@@ -90,7 +90,7 @@ class FakeExecutionAdapter:
             raise ExecutionFailure('SELL_SUBMIT_FAILED')
         return {'tx_hash': '0x' + 'b' * 64, 'nonce': transaction['nonce']}
 
-    def parse_actual_sell_proceeds(self, receipt, position):
+    async def parse_actual_sell_proceeds(self, receipt, position):
         return self.sell_received
 
     async def receipt_by_hash(self, tx_hash):

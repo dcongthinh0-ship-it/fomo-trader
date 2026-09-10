@@ -193,7 +193,7 @@ class UniswapRobinhoodExecutionAdapter:
         tx.update(_event_id=position['event_id'], _side='SELL')
         return tx
 
-    def parse_actual_sell_proceeds(self, receipt, position):
+    async def parse_actual_sell_proceeds(self, receipt, position):
         pool = self.pools.get(position['event_id'])
         if self.settings.amount_mode == 'USD':
             total = sum(int(item.get('data', '0x0'), 16) for item in receipt.get('logs') or []
@@ -202,7 +202,7 @@ class UniswapRobinhoodExecutionAdapter:
                         and item['topics'][2].lower() == address_topic(self.settings.wallet_address))
             return Decimal(total) / (Decimal(10) ** self.settings.buy_asset_decimals)
         if not pool:
-            raise ExecutionFailure('POOL_CONTEXT_MISSING')
+            pool = await self._pool_for_position(position)
         total = 0
         for item in receipt.get('logs') or []:
             if item.get('address', '').lower() != pool['address'] or not item.get('topics'):
