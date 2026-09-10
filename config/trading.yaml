@@ -1,0 +1,24 @@
+chain_id: 4663
+order:
+  amount_mode: USD
+  amount: "6"
+  take_profit_pct: "30"
+  sell_percentage: "100"
+  price_poll_seconds: 1
+  buy_max_slippage_bps: 500
+  sell_max_slippage_bps: 500
+  tx_deadline_seconds: 60
+  max_sell_attempts: 3
+contracts:
+  weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+  usdg: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
+  v2_factory: "0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f"
+  v2_router: "0x89e5db8b5aa49aa85ac63f691524311aeb649eba"
+  v3_factory: "0x1f7d7550b1b028f7571e69a784071f0205fd2efa"
+  v3_router: "0xcaf681a66d020601342297493863e78c959e5cb2"
+  v3_quoter: "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7"
+  v4_pool_manager: "0x8366a39cc670b4001a1121b8f6a443a643e40951"
+  v4_quoter: "0x8dc178efb8111bb0973dd9d722ebeff267c98f94"
+  v4_state_view: "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b"
+  universal_router: "0x8876789976decbfcbbbe364623c63652db8c0904"
+  permit2: "0x000000000022d473030f116ddee9f6b43ac78ba3"

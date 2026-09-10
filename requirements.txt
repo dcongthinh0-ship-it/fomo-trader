@@ -1,0 +1,4 @@
+aiohttp==3.14.3
+PyYAML==6.0.3
+eth-account==0.13.7
+eth-abi==5.2.0
