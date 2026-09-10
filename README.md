@@ -58,7 +58,7 @@ docker compose exec fomo-trader python -c 'import urllib.request; print(urllib.r
 
 ## 实盘前仍必须由用户在本机完成
 
-1. 配置专用小额钱包地址与只读私钥文件挂载，确认派生地址匹配。
+1. 配置 `TRADER_WALLET_ADDRESS` 与 `TRADER_PRIVATE_KEY_HOST_FILE=/绝对路径/私钥文件`；Compose 只读挂载到容器，启动时确认派生地址匹配。未配置时挂载 `/dev/null`，live 模式会拒绝启动。
 2. 配置稳定的独立生产 RPC，而不是公共限流端点。
 3. 明确选择 ETH 或准确地址/精度的 USD 资产与金额、滑点、deadline。
 4. 在 Robinhood Chain fork/testnet 完成真实 calldata、approval、买卖、nonce 重启、receipt 资产变化闭环。

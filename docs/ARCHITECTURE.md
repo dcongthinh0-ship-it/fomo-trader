@@ -33,7 +33,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 3. 目标固定为 `actual_cost × 1.30`，gas 不计入成本；只卖 100%，不含止损或其他策略。
 4. 市值与流动性只来自信号且不在本服务重查；链上池/路由核验不是新入场条件。
 5. V4 pool id 是 32 字节标识，绝不能当合约地址调用。
-6. 私钥和共享密钥只从只读文件读取，且被 Git/Docker build context 排除；健康接口与日志不泄露任何密钥或完整 RPC URL。
+6. 私钥和共享密钥只从只读文件读取，且被 Git/Docker build context 排除；Compose 未配置私钥时挂载 `/dev/null`，live 启动必然失败；健康接口与日志不泄露任何密钥或完整 RPC URL。
 
 ## 数据状态
 

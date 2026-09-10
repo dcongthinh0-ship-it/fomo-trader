@@ -17,6 +17,7 @@ services:
       - trader-data:/app/data
       - ./config:/app/config:ro
       - ${FOMO_TRADER_SHARED_SECRET_HOST_FILE:-./secrets/fomo_trader_shared_secret}:/run/secrets/fomo_trader_shared_secret:ro
+      - ${TRADER_PRIVATE_KEY_HOST_FILE:-/dev/null}:/run/secrets/trader_private_key:ro
     expose:
       - '8090'
     networks:
