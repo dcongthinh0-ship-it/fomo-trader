@@ -4,6 +4,10 @@ from eth_utils import keccak
 from .execution import ExecutionFailure
 from .models import ADDRESS
 
+ZERO_ADDRESS = '0x' + '0' * 40
+V4_INITIALIZE_TOPIC = '0x' + keccak(
+    text='Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)').hex()
+
 
 def selector(signature):
     return keccak(text=signature)[:4]
@@ -18,10 +22,11 @@ def word_address(raw):
 
 
 class PoolResolver:
-    def __init__(self, rpc, contracts, input_asset):
+    def __init__(self, rpc, contracts, input_asset, v4_input_asset=None):
         self.rpc = rpc
         self.contracts = {key: value.lower() for key, value in contracts.items()}
         self.input_asset = input_asset.lower()
+        self.v4_input_asset = (v4_input_asset or input_asset).lower()
 
     async def _call(self, address, signature, types=(), values=()):
         return await self.rpc.eth_call(address, calldata(signature, types, values))
@@ -93,20 +98,52 @@ class PoolResolver:
 
     async def _resolve_v4(self, signal, pool_id, key):
         if not isinstance(key, dict):
-            raise ExecutionFailure('V4_POOL_KEY_REQUIRED')
+            key = await self._discover_v4_key(pool_id)
         required = ('currency0', 'currency1', 'fee', 'tick_spacing', 'hooks')
         if any(name not in key for name in required):
             raise ExecutionFailure('V4_POOL_KEY_INCOMPLETE')
-        currency0, currency1 = key['currency0'].lower(), key['currency1'].lower()
-        if {currency0, currency1} != {signal.token_address.lower(), self.input_asset}:
+        currency0, currency1 = str(key['currency0']).lower(), str(key['currency1']).lower()
+        hooks = str(key['hooks']).lower()
+        if not all(ADDRESS.fullmatch(item) for item in (currency0, currency1, hooks)):
+            raise ExecutionFailure('V4_POOL_KEY_INVALID')
+        normalized = {'currency0': currency0, 'currency1': currency1,
+                      'fee': int(key['fee']), 'tick_spacing': int(key['tick_spacing']),
+                      'hooks': hooks}
+        if {currency0, currency1} != {signal.token_address.lower(), self.v4_input_asset}:
             raise ExecutionFailure('POOL_ASSET_MISMATCH')
         encoded = encode(['address', 'address', 'uint24', 'int24', 'address'],
-                         [currency0, currency1, int(key['fee']), int(key['tick_spacing']), key['hooks']])
+                         [currency0, currency1, normalized['fee'], normalized['tick_spacing'], hooks])
         if '0x' + keccak(encoded).hex() != pool_id.lower():
             raise ExecutionFailure('V4_POOL_ID_MISMATCH')
-        for contract in ('v4_pool_manager', 'v4_state_view', 'universal_router'):
+        for contract in ('v4_pool_manager', 'v4_state_view', 'v4_quoter', 'universal_router'):
             if await self.rpc.get_code(self.contracts[contract]) in ('0x', '0x0', None):
                 raise ExecutionFailure('VERIFIED_ROUTER_CODE_MISSING')
-        return {'version': 'v4', 'pool_id': pool_id.lower(), 'pool_key': key,
+        return {'version': 'v4', 'pool_id': pool_id.lower(), 'pool_key': normalized,
                 'pool_manager': self.contracts['v4_pool_manager'],
+                'quoter': self.contracts['v4_quoter'],
                 'router': self.contracts['universal_router']}
+
+    async def _discover_v4_key(self, pool_id):
+        logs = await self.rpc.call('eth_getLogs', [{
+            'address': self.contracts['v4_pool_manager'],
+            'fromBlock': '0x0',
+            'toBlock': 'latest',
+            'topics': [V4_INITIALIZE_TOPIC, pool_id.lower()],
+        }])
+        if not logs:
+            raise ExecutionFailure('V4_POOL_KEY_NOT_FOUND')
+        if len(logs) != 1:
+            raise ExecutionFailure('V4_POOL_KEY_AMBIGUOUS')
+        topics = logs[0].get('topics') or []
+        data = logs[0].get('data', '0x')
+        if len(topics) != 4 or topics[0].lower() != V4_INITIALIZE_TOPIC:
+            raise ExecutionFailure('V4_INITIALIZE_LOG_INVALID')
+        try:
+            fee, spacing, hooks, _, _ = decode(
+                ['uint24', 'int24', 'address', 'uint160', 'int24'],
+                bytes.fromhex(data.removeprefix('0x')),
+            )
+            return {'currency0': word_address(topics[2]), 'currency1': word_address(topics[3]),
+                    'fee': int(fee), 'tick_spacing': int(spacing), 'hooks': hooks.lower()}
+        except (TypeError, ValueError, OverflowError):
+            raise ExecutionFailure('V4_INITIALIZE_LOG_INVALID') from None

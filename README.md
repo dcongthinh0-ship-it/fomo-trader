@@ -8,7 +8,7 @@ Robinhood Chain（chain id `4663`）独立自动交易服务。它只接收 `fom
 - `LIVE_TRADING_ENABLED=false` 为默认值。未完成 fork/testnet 闭环与独立主网授权时不要改成 `true`。
 - 不要在聊天、Git 或 `.env` 中放私钥；私钥只放到宿主机权限为 `0600` 的文件，再只读挂载为 `/run/secrets/trader_private_key`。
 - HMAC 共享密钥与钱包私钥是两份不同秘密，禁止复用。
-- V2 执行已经实现但仍受 live 总开关控制；V3/V4 当前 fail-closed。详见 `docs/CONTRACTS.md`。
+- V2 与 V4 单池执行已经实现但仍受 live 总开关控制；V3 当前 fail-closed。详见 `docs/CONTRACTS.md`。
 
 ## 信号契约
 
