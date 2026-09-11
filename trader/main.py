@@ -30,7 +30,7 @@ async def serve():
             adapter = FakeExecutionAdapter()
         elif settings.adapter == 'uniswap':
             if rpc is None:
-                raise ValueError('uniswap adapter requires ROBINHOOD_TRADING_RPC_URL')
+                raise ValueError('uniswap adapter requires a configured trading RPC endpoint')
             adapter = UniswapRobinhoodExecutionAdapter(
                 db, rpc, NonceManager(db, rpc, settings.wallet_address), settings)
         else:

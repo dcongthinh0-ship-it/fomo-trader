@@ -39,6 +39,22 @@ uv pip install --python .venv/bin/python -r requirements.txt pytest pytest-async
 .venv/bin/pytest -q
 ```
 
+## 切换交易 RPC
+
+公共 RPC 与 Alchemy 使用同一套交易代码，只需在 `.env` 选择端点后重启服务：
+
+```dotenv
+# 公共 RPC
+ROBINHOOD_TRADING_RPC_PROVIDER=public
+ROBINHOOD_PUBLIC_RPC_URL=https://rpc.mainnet.chain.robinhood.com
+
+# 或 Alchemy（完整 URL 只放本机 .env，不提交 Git）
+ROBINHOOD_TRADING_RPC_PROVIDER=alchemy
+ROBINHOOD_ALCHEMY_RPC_URL=https://你的-Alchemy-Robinhood-Chain-端点
+```
+
+切换后执行 `docker compose up -d` 让新进程读取配置。系统不会在两个端点之间自动故障转移；未设置 provider 时仍兼容原有 `ROBINHOOD_TRADING_RPC_URL`。
+
 ## Docker（默认禁用交易）
 
 先建立共享私网，并在两个仓库各自准备同一份 HMAC 密钥文件；以下命令仅示例文件操作，终端不要打印秘密：

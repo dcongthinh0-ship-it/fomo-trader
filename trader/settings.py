@@ -38,7 +38,19 @@ class Settings:
         self.max_clock_skew = int(os.getenv('SIGNAL_MAX_CLOCK_SKEW_SECONDS', '30'))
         self.live = os.getenv('LIVE_TRADING_ENABLED', 'false').lower() == 'true'
         self.adapter = os.getenv('EXECUTION_ADAPTER', 'uniswap')
-        self.rpc_url = os.getenv('ROBINHOOD_TRADING_RPC_URL', '')
+        provider = os.getenv('ROBINHOOD_TRADING_RPC_PROVIDER', '').strip().lower()
+        if provider and provider not in ('public', 'alchemy'):
+            raise ValueError('ROBINHOOD_TRADING_RPC_PROVIDER must be public or alchemy')
+        if provider == 'public':
+            self.rpc_url = os.getenv(
+                'ROBINHOOD_PUBLIC_RPC_URL', 'https://rpc.mainnet.chain.robinhood.com').strip()
+        elif provider == 'alchemy':
+            self.rpc_url = os.getenv('ROBINHOOD_ALCHEMY_RPC_URL', '').strip()
+            if not self.rpc_url:
+                raise ValueError('alchemy provider requires ROBINHOOD_ALCHEMY_RPC_URL')
+        else:
+            self.rpc_url = os.getenv('ROBINHOOD_TRADING_RPC_URL', '').strip()
+        self.rpc_provider = provider or 'legacy'
         self.rpc_rps = float(os.getenv('ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND', '5'))
         self.health_port = int(os.getenv('HEALTH_PORT', '8090'))
         order = self.config['order']

@@ -18,7 +18,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 
 ## 模块职责
 
-- `settings.py`：环境/YAML、固定策略与 live 凭据闭锁。
+- `settings.py`：环境/YAML、固定策略、public/Alchemy RPC 显式选择与 live 凭据闭锁。
 - `auth.py`、`models.py`、`signals.py`、`api.py`：通信认证、验证、幂等接收和健康接口。
 - `db.py`：signals/orders/positions/execution_attempts/nonce_state 持久化；签名、广播、approval 与 receipt 事实分步留痕。
 - `execution.py`、`worker.py`：适配器协议和可恢复买卖状态机。
@@ -34,6 +34,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 4. 市值与流动性只来自信号且不在本服务重查；链上池/路由核验不是新入场条件。
 5. V4 pool id 是 32 字节标识，绝不能当合约地址调用；PoolKey 必须来自 PoolManager 的对应 `Initialize` 日志或信号字段，并重新计算 pool id 核对。
 6. 私钥和共享密钥只从只读文件读取，且被 Git/Docker build context 排除；Compose 未配置私钥时挂载 `/dev/null`，live 启动必然失败；健康接口与日志不泄露任何密钥或完整 RPC URL。
+7. 交易 RPC 在进程启动时通过 `ROBINHOOD_TRADING_RPC_PROVIDER=public|alchemy` 选择；两种端点复用同一 RPC 客户端，不做静默自动切换。
 
 ## 数据状态
 

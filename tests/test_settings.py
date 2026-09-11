@@ -6,7 +6,9 @@ from trader.settings import Settings
 
 def clear(monkeypatch):
     for name in ('LIVE_TRADING_ENABLED', 'BUY_AMOUNT_MODE', 'BUY_ASSET_ADDRESS',
-                 'TRADER_WALLET_ADDRESS', 'TRADER_PRIVATE_KEY_FILE'):
+                 'TRADER_WALLET_ADDRESS', 'TRADER_PRIVATE_KEY_FILE',
+                 'ROBINHOOD_TRADING_RPC_PROVIDER', 'ROBINHOOD_PUBLIC_RPC_URL',
+                 'ROBINHOOD_ALCHEMY_RPC_URL'):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -41,3 +43,26 @@ def test_live_wallet_matching_random_test_key_is_accepted(monkeypatch, tmp_path)
     monkeypatch.setenv('TRADER_WALLET_ADDRESS', account.address)
     monkeypatch.setenv('ROBINHOOD_TRADING_RPC_URL', 'https://example.invalid')
     assert Settings().wallet_address == account.address
+
+
+@pytest.mark.parametrize(('provider', 'expected'), [
+    ('public', 'https://public.example'),
+    ('alchemy', 'https://alchemy.example/v2/test-key'),
+])
+def test_rpc_provider_can_switch_between_public_and_alchemy(monkeypatch, provider, expected):
+    clear(monkeypatch)
+    monkeypatch.setenv('ROBINHOOD_TRADING_RPC_PROVIDER', provider)
+    monkeypatch.setenv('ROBINHOOD_PUBLIC_RPC_URL', 'https://public.example')
+    monkeypatch.setenv('ROBINHOOD_ALCHEMY_RPC_URL', 'https://alchemy.example/v2/test-key')
+    monkeypatch.setenv('ROBINHOOD_TRADING_RPC_URL', 'https://legacy.example')
+    settings = Settings()
+    assert settings.rpc_provider == provider
+    assert settings.rpc_url == expected
+
+
+def test_alchemy_provider_requires_its_url(monkeypatch):
+    clear(monkeypatch)
+    monkeypatch.setenv('ROBINHOOD_TRADING_RPC_PROVIDER', 'alchemy')
+    monkeypatch.setenv('ROBINHOOD_ALCHEMY_RPC_URL', '')
+    with pytest.raises(ValueError, match='ROBINHOOD_ALCHEMY_RPC_URL'):
+        Settings()
