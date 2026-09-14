@@ -11,6 +11,7 @@ from trader.models import TradeSignal
 from trader.pools import PoolResolver, selector
 from trader.uniswap import (
     TRANSFER_TOPIC,
+    WETH_WITHDRAWAL_TOPIC,
     UniswapRobinhoodExecutionAdapter,
     address_topic,
     raw_amount,
@@ -181,10 +182,72 @@ def test_receipt_parser_uses_only_target_token_transfers_to_wallet(db):
     assert adapter(db).parse_actual_token_received(receipt, TOKEN, WALLET) == Decimal(123)
 
 
-async def test_v3_execution_fails_closed_until_fork_validated(db):
+def v3_pool():
+    return {'version': 'v3', 'address': POOL, 'router': contracts()['v3_router'],
+            'quoter': contracts()['v3_quoter'], 'path_buy': [INPUT, TOKEN],
+            'path_sell': [TOKEN, INPUT], 'fees_buy': [3000], 'fees_sell': [3000]}
+
+
+async def test_v3_buy_quote_uses_quoter_v2_exact_input(db):
     instance = adapter(db)
-    with pytest.raises(ExecutionFailure, match='V3_EXECUTION_NOT_FORK_VALIDATED'):
-        await instance.quote_buy(signal(), {'version': 'v3'}, Decimal('1'))
+    instance.rpc.eth_call = AsyncMock(return_value=encoded(
+        ['uint256', 'uint160[]', 'uint32[]', 'uint256'], [123, [1], [2], 456]))
+
+    assert await instance.quote_buy(signal(), v3_pool(), Decimal('0.002')) == Decimal(123)
+    address, data = instance.rpc.eth_call.await_args.args
+    assert address == contracts()['v3_quoter']
+    assert data.startswith('0x' + selector('quoteExactInput(bytes,uint256)').hex())
+
+
+async def test_v3_native_buy_builds_deadlined_swaprouter02_multicall(db):
+    instance = adapter(db)
+    instance._base_transaction = AsyncMock(return_value={'nonce': 1})
+
+    tx = await instance.build_buy_transaction(signal(), v3_pool(), Decimal('0.002'), Decimal(123))
+
+    assert tx['_side'] == 'BUY'
+    to, data, value = instance._base_transaction.await_args.args
+    assert to == contracts()['v3_router'] and value == 2 * 10**15
+    assert data.startswith('0x' + selector('multicall(uint256,bytes[])').hex())
+    _, calls = decode(['uint256', 'bytes[]'], bytes.fromhex(data[10:]))
+    assert len(calls) == 1
+    assert calls[0].startswith(selector('exactInput((bytes,address,uint256,uint256))'))
+
+
+async def test_v3_native_sell_approves_swaps_and_unwraps_weth(db):
+    instance = adapter(db)
+    pool = v3_pool()
+    position = {'event_id': 'e', 'token_address': TOKEN, 'token_quantity': '42'}
+    instance.pools['e'] = pool
+    instance._allowance = AsyncMock(return_value=0)
+    instance._approve_exact = AsyncMock()
+    instance._base_transaction = AsyncMock(return_value={'nonce': 2})
+
+    await instance.ensure_token_approval(position)
+    tx = await instance.build_sell_transaction(position, Decimal('0.000001'))
+
+    instance._approve_exact.assert_awaited_once_with('e', TOKEN, contracts()['v3_router'], 42)
+    assert tx['_side'] == 'SELL'
+    _, data, value = instance._base_transaction.await_args.args
+    assert value == 0
+    _, calls = decode(['uint256', 'bytes[]'], bytes.fromhex(data[10:]))
+    assert len(calls) == 2
+    assert calls[0].startswith(selector('exactInput((bytes,address,uint256,uint256))'))
+    assert calls[1].startswith(selector('unwrapWETH9(uint256,address)'))
+
+
+async def test_v3_native_sell_proceeds_use_router_weth_withdrawal(db):
+    instance = adapter(db)
+    pool = v3_pool()
+    instance.pools['e'] = pool
+    position = {'event_id': 'e', 'token_address': TOKEN, 'token_quantity': '42'}
+    receipt = {'logs': [{
+        'address': INPUT,
+        'topics': [WETH_WITHDRAWAL_TOPIC, address_topic(contracts()['v3_router'])],
+        'data': hex(10**15),
+    }]}
+
+    assert await instance.parse_actual_sell_proceeds(receipt, position) == Decimal('0.001')
 
 
 async def test_v4_buy_quote_uses_exact_input_single(db):

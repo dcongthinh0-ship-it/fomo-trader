@@ -17,6 +17,8 @@ TRANSFER_TOPIC = '0x' + keccak(text='Transfer(address,address,uint256)').hex()
 SWAP_V2_TOPIC = '0x' + keccak(text='Swap(address,uint256,uint256,uint256,uint256,address)').hex()
 SWAP_V4_TOPIC = '0x' + keccak(
     text='Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)').hex()
+WETH_WITHDRAWAL_TOPIC = '0x' + keccak(text='Withdrawal(address,uint256)').hex()
+ROUTER_ADDRESS_THIS = '0x' + '0' * 39 + '2'
 MAX_UINT128 = 2 ** 128 - 1
 MAX_UINT160 = 2 ** 160 - 1
 MAX_UINT256 = 2 ** 256 - 1
@@ -35,6 +37,17 @@ def raw_amount(amount, decimals):
 
 def address_topic(address):
     return '0x' + address.lower().removeprefix('0x').rjust(64, '0')
+
+
+def v3_path(tokens, fees):
+    if len(tokens) != len(fees) + 1 or not fees:
+        raise ExecutionFailure('V3_PATH_INVALID')
+    packed = bytes.fromhex(tokens[0].removeprefix('0x'))
+    for fee, token in zip(fees, tokens[1:], strict=True):
+        if not 0 <= int(fee) < 2 ** 24:
+            raise ExecutionFailure('V3_FEE_INVALID')
+        packed += int(fee).to_bytes(3, 'big') + bytes.fromhex(token.removeprefix('0x'))
+    return packed
 
 
 class UniswapRobinhoodExecutionAdapter:
@@ -97,14 +110,42 @@ class UniswapRobinhoodExecutionAdapter:
             raise ExecutionFailure('ZERO_QUOTE')
         return int(amount_out)
 
+    async def _quote_v3(self, amount_in, pool, side):
+        path = v3_path(pool[f'path_{side}'], pool[f'fees_{side}'])
+        data = await self.rpc.eth_call(
+            pool['quoter'],
+            calldata('quoteExactInput(bytes,uint256)', ['bytes', 'uint256'], [path, amount_in]),
+        )
+        amount_out, _, _, _ = decode(
+            ['uint256', 'uint160[]', 'uint32[]', 'uint256'], bytes.fromhex(data[2:]))
+        if amount_out <= 0:
+            raise ExecutionFailure('ZERO_QUOTE')
+        return int(amount_out)
+
     async def quote_buy(self, signal, pool, amount):
-        if pool['version'] == 'v3':
-            raise ExecutionFailure(f'{pool["version"].upper()}_EXECUTION_NOT_FORK_VALIDATED')
         decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
         amount_in = raw_amount(amount, decimals)
         if pool['version'] == 'v4':
             return Decimal(await self._quote_v4(amount_in, pool, self.v4_input_asset))
+        if pool['version'] == 'v3':
+            return Decimal(await self._quote_v3(amount_in, pool, 'buy'))
         return Decimal(await self._quote_v2(amount_in, pool['path_buy']))
+
+    @staticmethod
+    def _v3_swap_calldata(pool, side, amount_in, minimum, deadline, recipient, unwrap=False):
+        path = v3_path(pool[f'path_{side}'], pool[f'fees_{side}'])
+        swap_recipient = ROUTER_ADDRESS_THIS if unwrap else recipient
+        swap = calldata(
+            'exactInput((bytes,address,uint256,uint256))',
+            ['(bytes,address,uint256,uint256)'],
+            [(path, swap_recipient, amount_in, minimum)],
+        )
+        calls = [bytes.fromhex(swap[2:])]
+        if unwrap:
+            unwrap_call = calldata('unwrapWETH9(uint256,address)', ['uint256', 'address'],
+                                   [minimum, recipient])
+            calls.append(bytes.fromhex(unwrap_call[2:]))
+        return calldata('multicall(uint256,bytes[])', ['uint256', 'bytes[]'], [deadline, calls])
 
     async def _base_transaction(self, to, data, value=0):
         nonce = await self.nonce.reserve()
@@ -115,8 +156,6 @@ class UniswapRobinhoodExecutionAdapter:
         return tx
 
     async def build_buy_transaction(self, signal, pool, amount, minimum):
-        if pool['version'] == 'v3':
-            raise ExecutionFailure(f'{pool["version"].upper()}_EXECUTION_NOT_FORK_VALIDATED')
         deadline, router = int(time.time()) + self.settings.deadline_seconds, pool['router']
         if pool['version'] == 'v4':
             decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
@@ -130,6 +169,17 @@ class UniswapRobinhoodExecutionAdapter:
                                           amount_in, int(minimum), deadline)
             tx = await self._base_transaction(
                 router, data, amount_in if self.v4_input_asset == ZERO_ADDRESS else 0)
+            tx.update(_event_id=signal.event_id, _side='BUY')
+            return tx
+        if pool['version'] == 'v3':
+            decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
+            amount_in = raw_amount(amount, decimals)
+            if self.settings.amount_mode == 'USD' and await self._allowance(self.input_asset, router) < amount_in:
+                await self._approve_exact(signal.event_id, self.input_asset, router, amount_in)
+            data = self._v3_swap_calldata(
+                pool, 'buy', amount_in, int(minimum), deadline, self.settings.wallet_address)
+            tx = await self._base_transaction(
+                router, data, amount_in if self.settings.amount_mode == 'ETH' else 0)
             tx.update(_event_id=signal.event_id, _side='BUY')
             return tx
         if self.settings.amount_mode == 'ETH':
@@ -224,12 +274,13 @@ class UniswapRobinhoodExecutionAdapter:
 
     async def quote_full_sell(self, position):
         pool = await self._pool_for_position(position)
-        if pool['version'] == 'v3':
-            raise ExecutionFailure(f'{pool["version"].upper()}_EXECUTION_NOT_FORK_VALIDATED')
         amount = int(Decimal(position['token_quantity']))
-        output = (await self._quote_v4(amount, pool, position['token_address'])
-                  if pool['version'] == 'v4'
-                  else await self._quote_v2(amount, pool['path_sell']))
+        if pool['version'] == 'v4':
+            output = await self._quote_v4(amount, pool, position['token_address'])
+        elif pool['version'] == 'v3':
+            output = await self._quote_v3(amount, pool, 'sell')
+        else:
+            output = await self._quote_v2(amount, pool['path_sell'])
         decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
         return Decimal(output) / (Decimal(10) ** decimals)
 
@@ -292,8 +343,6 @@ class UniswapRobinhoodExecutionAdapter:
 
     async def build_sell_transaction(self, position, minimum):
         pool = await self._pool_for_position(position)
-        if pool['version'] == 'v3':
-            raise ExecutionFailure(f'{pool["version"].upper()}_EXECUTION_NOT_FORK_VALIDATED')
         amount = int(Decimal(position['token_quantity']))
         min_raw = raw_amount(minimum, 18 if self.settings.amount_mode == 'ETH'
                              else self.settings.buy_asset_decimals)
@@ -301,6 +350,13 @@ class UniswapRobinhoodExecutionAdapter:
         if pool['version'] == 'v4':
             data = self._v4_swap_calldata(pool, position['token_address'], self.v4_input_asset,
                                           amount, min_raw, deadline)
+            tx = await self._base_transaction(pool['router'], data, 0)
+            tx.update(_event_id=position['event_id'], _side='SELL')
+            return tx
+        if pool['version'] == 'v3':
+            data = self._v3_swap_calldata(
+                pool, 'sell', amount, min_raw, deadline, self.settings.wallet_address,
+                unwrap=self.settings.amount_mode == 'ETH')
             tx = await self._base_transaction(pool['router'], data, 0)
             tx.update(_event_id=position['event_id'], _side='SELL')
             return tx
@@ -324,6 +380,16 @@ class UniswapRobinhoodExecutionAdapter:
             return Decimal(total) / (Decimal(10) ** self.settings.buy_asset_decimals)
         if not pool:
             pool = await self._pool_for_position(position)
+        if pool['version'] == 'v3':
+            total = sum(
+                int(item.get('data', '0x0'), 16)
+                for item in receipt.get('logs') or []
+                if item.get('address', '').lower() == self.input_asset
+                and len(item.get('topics') or []) >= 2
+                and item['topics'][0].lower() == WETH_WITHDRAWAL_TOPIC
+                and item['topics'][1].lower() == address_topic(pool['router'])
+            )
+            return Decimal(total) / Decimal(10 ** 18)
         if pool['version'] == 'v4':
             zero_for_one = self._v4_zero_for_one(pool, position['token_address'])
             output_index = 1 if zero_for_one else 0

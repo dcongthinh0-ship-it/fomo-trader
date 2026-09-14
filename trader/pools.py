@@ -93,7 +93,8 @@ class PoolResolver:
             if other != self.input_asset:
                 raise ExecutionFailure('V3_MULTIHOP_NOT_FORK_VALIDATED')
             result.update(path_buy=[self.input_asset, signal.token_address.lower()],
-                          path_sell=[signal.token_address.lower(), self.input_asset])
+                          path_sell=[signal.token_address.lower(), self.input_asset],
+                          fees_buy=[fee], fees_sell=[fee])
         return result
 
     async def _resolve_v4(self, signal, pool_id, key):

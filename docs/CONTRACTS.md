@@ -28,7 +28,7 @@
 ## 代码支持状态
 
 - V2：已实现 Factory/token0/token1/reserves 核对、买入资产直连或同一官方 Factory 单桥路由、精确输入报价、ETH/指定 ERC-20 买卖 calldata、非零 `amountOutMin`、精确额度 approval、本地签名、广播不确定性和 receipt 日志解析。仅待 fork 闭环后才可实盘。
-- V3：已实现 Factory/token0/token1/fee/tickSpacing 识别；执行 fail-closed，错误码 `V3_EXECUTION_NOT_FORK_VALIDATED`。
+- V3：已实现 Factory/token0/token1/fee/tickSpacing 识别、QuoterV2 精确输入报价、SwapRouter02 原生 ETH 买入、ERC-20 approval、反向卖出与 WETH 解包；路径带非零 `amountOutMinimum` 和 deadline multicall。
 - V4：从 PoolManager 对应 `Initialize` 日志自动恢复 PoolKey（也兼容信号直接携带），重新计算并核对 pool id；检查官方 PoolManager/StateView/V4Quoter/UniversalRouter bytecode。已实现 `quoteExactInputSingle`、Universal Router 2.1.1 的 `V4_SWAP` 单池精确输入买卖、原生 ETH 结算、ERC-20 → Permit2 → Universal Router 精确额度授权，以及买入 token/卖出 proceeds 的 receipt 解析。从不对 32 字节 pool id 发合约调用。
 
-2026-09-11 使用官方公共 RPC 对已初始化的原生 ETH/USDG V4 池完成了只读验证：V4Quoter 返回非零报价，代码生成的 Universal Router calldata 经 `eth_call` 成功返回 `0x`。该验证没有签名、没有广播、没有资金变化。V3 仍保持 fail-closed；V4 虽已具备执行代码，也仍受全局 live 开关和上表“当前允许实盘”边界约束。
+2026-09-11 使用官方公共 RPC 对已初始化的原生 ETH/USDG V4 池完成了只读验证：V4Quoter 返回非零报价，代码生成的 Universal Router calldata 经 `eth_call` 成功返回 `0x`。2026-09-15 又对监控真实命中的 V3 Token/WETH 池完成 QuoterV2 非零报价与 SwapRouter02 原生 ETH 买入 `eth_call`；池解析、报价和模拟分别约 2677 ms、269 ms 和 284 ms，后续低延迟阶段继续优化解析。两次验证均没有签名、广播或资金变化；所有版本仍受全局 live 开关和上表“当前允许实盘”边界约束。

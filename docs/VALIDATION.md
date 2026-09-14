@@ -17,13 +17,15 @@
 
 官方 Robinhood RPC 上对 `docs/CONTRACTS.md` 的关键地址运行 `eth_getCode`，均为非空。本步骤只读，无钱包、签名或广播。
 
+2026-09-15 对最近真实信号 `0xeea…af7` 的 V3 Token/WETH 池完成新增执行器核验：识别 fee 10000，QuoterV2 返回非零结果，带 deadline 的 SwapRouter02 `multicall → exactInput` 使用公开有余额地址做 `eth_call` 成功。解析、报价、模拟耗时约 2677/269/284 ms；没有私钥、签名、广播或余额变化。
+
 ## 尚未执行
 
-- Robinhood Chain fork/testnet 的真实 Uniswap 买入与卖出闭环。
+- Robinhood Chain fork/testnet 的真实签名买入与卖出闭环。
 - Docker Secret 中真实专用小额钱包验证。
 - 任何主网资金交易。
 
-因此 `LIVE_TRADING_ENABLED` 必须保持 `false`，V3/V4 执行继续 fail-closed。
+因此 `LIVE_TRADING_ENABLED` 必须保持 `false`；已实现的 V2/V3/V4 执行仍不得主网广播。
 
 ## 本地双服务交接
 
