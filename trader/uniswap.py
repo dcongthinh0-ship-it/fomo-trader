@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from decimal import Decimal
@@ -24,6 +25,7 @@ MAX_UINT160 = 2 ** 160 - 1
 MAX_UINT256 = 2 ** 256 - 1
 V4_SWAP_COMMAND = b'\x10'
 V4_EXACT_IN_SINGLE = b'\x06'
+V4_EXACT_IN = b'\x07'
 V4_SETTLE_ALL = b'\x0c'
 V4_TAKE_ALL = b'\x0f'
 
@@ -51,7 +53,7 @@ def v3_path(tokens, fees):
 
 
 class UniswapRobinhoodExecutionAdapter:
-    """Direct V2 and single-pool V4 execution; V3 remains fail-closed."""
+    """Official Uniswap V2, V3 and V4 exact-input execution."""
     def __init__(self, db, rpc, nonce, settings):
         self.db, self.rpc, self.nonce, self.settings = db, rpc, nonce, settings
         contracts = settings.config['contracts']
@@ -96,6 +98,34 @@ class UniswapRobinhoodExecutionAdapter:
     async def _quote_v4(self, amount_in, pool, currency_in):
         if not 0 < amount_in <= MAX_UINT128:
             raise ExecutionFailure('V4_AMOUNT_OUT_OF_RANGE')
+        side = 'buy' if currency_in.lower() == self.v4_input_asset else 'sell'
+        candidates = pool.get('route_candidates') or []
+        if candidates:
+            async def quote_candidate(candidate):
+                keys = candidate.get(f'keys_{side}') or (
+                    candidate['keys'] if side == 'buy' else list(reversed(candidate['keys'])))
+                path = self._v4_path(keys, currency_in)
+                params = (currency_in, path, amount_in)
+                try:
+                    data = await self.rpc.eth_call(
+                        pool['quoter'],
+                        calldata(
+                            'quoteExactInput((address,(address,uint24,int24,address,bytes)[],uint128))',
+                            ['(address,(address,uint24,int24,address,bytes)[],uint128)'],
+                            [params],
+                        ),
+                    )
+                    amount_out, _ = decode(['uint256', 'uint256'], bytes.fromhex(data[2:]))
+                except Exception:
+                    return None
+                return (int(amount_out), keys) if amount_out > 0 else None
+
+            quoted = await asyncio.gather(*(quote_candidate(candidate) for candidate in candidates))
+            best = max((item for item in quoted if item is not None), default=None, key=lambda item: item[0])
+            if best is None:
+                raise ExecutionFailure('ZERO_QUOTE')
+            pool[f'_selected_v4_{side}'] = best[1]
+            return best[0]
         params = (self._v4_key(pool), self._v4_zero_for_one(pool, currency_in), amount_in, b'')
         data = await self.rpc.eth_call(
             pool['quoter'],
@@ -110,17 +140,45 @@ class UniswapRobinhoodExecutionAdapter:
             raise ExecutionFailure('ZERO_QUOTE')
         return int(amount_out)
 
+    @staticmethod
+    def _v4_path(keys, currency_in):
+        current = currency_in.lower()
+        result = []
+        for key in keys:
+            left, right = key['currency0'].lower(), key['currency1'].lower()
+            if current == left:
+                output = right
+            elif current == right:
+                output = left
+            else:
+                raise ExecutionFailure('V4_PATH_DISCONNECTED')
+            result.append((output, int(key['fee']), int(key['tick_spacing']), key['hooks'], b''))
+            current = output
+        return result
+
     async def _quote_v3(self, amount_in, pool, side):
-        path = v3_path(pool[f'path_{side}'], pool[f'fees_{side}'])
-        data = await self.rpc.eth_call(
-            pool['quoter'],
-            calldata('quoteExactInput(bytes,uint256)', ['bytes', 'uint256'], [path, amount_in]),
-        )
-        amount_out, _, _, _ = decode(
-            ['uint256', 'uint160[]', 'uint32[]', 'uint256'], bytes.fromhex(data[2:]))
-        if amount_out <= 0:
+        candidates = pool.get('route_candidates') or [pool]
+        async def quote_candidate(candidate):
+            path = v3_path(candidate[f'path_{side}'], candidate[f'fees_{side}'])
+            try:
+                data = await self.rpc.eth_call(
+                    pool['quoter'],
+                    calldata('quoteExactInput(bytes,uint256)', ['bytes', 'uint256'], [path, amount_in]),
+                )
+                amount_out, _, _, _ = decode(
+                    ['uint256', 'uint160[]', 'uint32[]', 'uint256'], bytes.fromhex(data[2:]))
+            except Exception:
+                return None
+            return (int(amount_out), candidate) if amount_out > 0 else None
+
+        quoted = await asyncio.gather(*(quote_candidate(candidate) for candidate in candidates))
+        best = max((item for item in quoted if item is not None), default=None, key=lambda item: item[0])
+        if best is None:
             raise ExecutionFailure('ZERO_QUOTE')
-        return int(amount_out)
+        selected = best[1]
+        pool[f'path_{side}'] = selected[f'path_{side}']
+        pool[f'fees_{side}'] = selected[f'fees_{side}']
+        return best[0]
 
     async def quote_buy(self, signal, pool, amount):
         decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
@@ -162,10 +220,7 @@ class UniswapRobinhoodExecutionAdapter:
             amount_in = raw_amount(amount, decimals)
             if self.settings.amount_mode == 'USD':
                 await self._ensure_v4_approval(signal.event_id, self.input_asset, amount_in)
-            output_currency = (pool['pool_key']['currency1']
-                               if self._v4_zero_for_one(pool, self.v4_input_asset)
-                               else pool['pool_key']['currency0'])
-            data = self._v4_swap_calldata(pool, self.v4_input_asset, output_currency,
+            data = self._v4_swap_calldata(pool, self.v4_input_asset, signal.token_address.lower(),
                                           amount_in, int(minimum), deadline)
             tx = await self._base_transaction(
                 router, data, amount_in if self.v4_input_asset == ZERO_ADDRESS else 0)
@@ -205,12 +260,21 @@ class UniswapRobinhoodExecutionAdapter:
     def _v4_swap_calldata(self, pool, currency_in, currency_out, amount_in, minimum, deadline):
         if not 0 < amount_in <= MAX_UINT128 or not 0 <= minimum <= MAX_UINT128:
             raise ExecutionFailure('V4_AMOUNT_OUT_OF_RANGE')
-        swap = (self._v4_key(pool), self._v4_zero_for_one(pool, currency_in),
-                amount_in, minimum, 0, b'')
-        actions = V4_EXACT_IN_SINGLE + V4_SETTLE_ALL + V4_TAKE_ALL
+        side = 'buy' if currency_in.lower() == self.v4_input_asset else 'sell'
+        keys = pool.get(f'_selected_v4_{side}')
+        if keys:
+            path = self._v4_path(keys, currency_in)
+            swap = (currency_in, path, [], amount_in, minimum)
+            swap_type = '(address,(address,uint24,int24,address,bytes)[],uint256[],uint128,uint128)'
+            action = V4_EXACT_IN
+        else:
+            swap = (self._v4_key(pool), self._v4_zero_for_one(pool, currency_in),
+                    amount_in, minimum, 0, b'')
+            swap_type = '((address,address,uint24,int24,address),bool,uint128,uint128,uint256,bytes)'
+            action = V4_EXACT_IN_SINGLE
+        actions = action + V4_SETTLE_ALL + V4_TAKE_ALL
         params = [
-            encode(['((address,address,uint24,int24,address),bool,uint128,uint128,uint256,bytes)'],
-                   [swap]),
+            encode([swap_type], [swap]),
             encode(['address', 'uint256'], [currency_in, MAX_UINT256]),
             encode(['address', 'uint256'], [currency_out, minimum]),
         ]

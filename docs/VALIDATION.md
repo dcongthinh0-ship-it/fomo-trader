@@ -9,7 +9,7 @@
 - 固定 30% 目标、低于目标不卖、FakeExecutionAdapter 买卖闭环、买卖失败状态。
 - nonce 取链上 pending 与本地保留值的较大者及重启 reconcile。
 - receipt 超时后保留 tx hash，重启只查原交易并恢复建仓，不创建第二笔 BUY。
-- V2/V3 池官方 Factory、资产与参数识别，V2 直连/单桥路径；V4 pool id 不作为地址调用。
+- V2/V3 池官方 Factory、资产与参数识别，V2/V3 直连/单桥路径；V4 pool id 不作为地址调用，V4 单桥候选按 StateView 活跃流动性限量筛选。
 - 精确金额换算、非零最小输出、receipt Transfer 解析。
 - 默认 live=false，以及随机测试密钥的地址匹配/不匹配启动校验；测试密钥不进入 Git。
 
@@ -18,6 +18,8 @@
 官方 Robinhood RPC 上对 `docs/CONTRACTS.md` 的关键地址运行 `eth_getCode`，均为非空。本步骤只读，无钱包、签名或广播。
 
 2026-09-15 对最近真实信号 `0xeea…af7` 的 V3 Token/WETH 池完成新增执行器核验：识别 fee 10000，QuoterV2 返回非零结果，带 deadline 的 SwapRouter02 `multicall → exactInput` 使用公开有余额地址做 `eth_call` 成功。解析、报价、模拟耗时约 2677/269/284 ms；没有私钥、签名、广播或余额变化。
+
+同日对真实信号 `0x59ce…ece4` 的非直连 V4 池完成核验：链上存在 204 个原生 ETH/桥接币 PoolKey；代码通过 Multicall3 单次读取 StateView 活跃流动性，筛至 8 个候选后由 V4Quoter 选出可成交路径，生成的 Universal Router `SWAP_EXACT_IN → SETTLE_ALL → TAKE_ALL` 两池原子买入 calldata 经 `eth_call` 返回 `0x`。解析、报价、模拟约 5768/2278/495 ms；没有私钥、签名、广播或余额变化。
 
 ## 尚未执行
 
