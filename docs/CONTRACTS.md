@@ -35,3 +35,5 @@
 2026-09-11 使用官方公共 RPC 对已初始化的原生 ETH/USDG V4 池完成了只读验证：V4Quoter 返回非零报价，代码生成的 Universal Router calldata 经 `eth_call` 成功返回 `0x`。2026-09-15 又对监控真实命中的 V3 Token/WETH 池完成 QuoterV2 非零报价与 SwapRouter02 原生 ETH 买入 `eth_call`；池解析、报价和模拟分别约 2677 ms、269 ms 和 284 ms。同日对此前无法直连的真实 V4 信号 `0x59ce…ece4` 完成 204 个桥接 PoolKey 的批量流动性筛选、8 候选报价和两池原子买入模拟，Universal Router 返回 `0x`；解析、报价、模拟约 5768/2278/495 ms，后续低延迟阶段继续优化。所有验证均没有私钥、签名、广播或资金变化；所有版本仍受全局 live 开关和上表“当前允许实盘”边界约束。
 
 2026-09-15 对 V2 WETH/USDG Pair `0x8803…1c4d` 完成 Factory、bytecode、非零 reserves、正反向 `getAmountsOut` 和原生 ETH 买入模拟；Router `eth_call` 返回 `0x`，解析、报价、模拟约 2606/526/491 ms。由此 V2、V3、V4 三种买入编码均已有真实链上只读成功样本。
+
+2026-09-15 00:38 北京时间截取监控器最近 20 条 eligible 信号（决策时间 2026-09-14 17:59:19 至 2026-09-15 00:38:12）逐条执行池解析、ETH 报价、买入 calldata 和 Router `eth_call`：14 条 V3、6 条 V4，最终 20/20 成功。三条首次受公共 RPC 或零地址模拟调用者影响的 V4 样本，改用各自 feed 交易的公开非零发送地址作为只读 `from` 后均返回 `0x`；没有使用这些地址的私钥。该批没有 V2，V2 由上面的独立真实池样本覆盖。

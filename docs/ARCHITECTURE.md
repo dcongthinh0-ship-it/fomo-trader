@@ -42,6 +42,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 12. `CREATED` 且没有 tx hash 的订单属于可安全重试的广播前状态；瞬时 RPC 故障会回到 `RECEIVED/OPEN`。链上卖出成功但 proceeds 无法解析时直接标记 `POSITION_STUCK`，禁止对已经卖出的仓位再次发送卖单。
 13. ERC-20/Permit2 approval 使用独立的 `APPROVAL` execution attempt；提交不确定或 receipt 超时只按原 tx hash 恢复，在确认或回滚前不得发送第二笔 approval，也不得把 approval 的 tx hash 写入 BUY/SELL 订单。
 14. worker 每 5 秒写入一次心跳并保存最近异常类型/时间；心跳超过 15 秒或存在 `POSITION_STUCK` 时 `/health` 返回 `service=degraded`，但不暴露钱包、RPC URL 或密钥。
+15. V4 只读 Router 模拟必须显式提供非零公开 `from` 地址；`TAKE_ALL` 把 `msgSender()` 作为收款人，省略 `from` 会让严格 ERC-20 以 `ERC20InvalidReceiver(0x0)` 回滚，这不是实际签名交易的路由失败。
 
 ## 数据状态
 

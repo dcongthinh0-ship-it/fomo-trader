@@ -26,6 +26,8 @@
 
 同日对 V2 WETH/USDG Pair `0x8803…1c4d` 完成正反向非零报价与原生 ETH 买入模拟，V2Router02 `eth_call` 返回 `0x`；解析、报价、模拟约 2606/526/491 ms。至此 V2、V3、V4 买入 calldata 均有真实链上只读成功样本。
 
+截至 2026-09-15 00:38:12 北京时间，读取 monitor outbox 最近 20 条 eligible 信号（起点 2026-09-14 17:59:19），逐条用 ETH 模式完成解析、实时报价、买入构建和 Router `eth_call`。样本为 V3 14 条、V4 6 条，最终 20/20 成功。公共 RPC 的批量突刺故障通过保守档复核；Pons hook 的两条严格 ERC-20 样本在显式传入 feed 交易的公开非零发送地址作为 `eth_call.from` 后成功，证明此前 `ERC20InvalidReceiver(0x0)` 仅由省略模拟调用者造成。全程没有私钥、签名、广播或资金变化。
+
 ## 尚未执行
 
 - Robinhood Chain fork/testnet 的真实签名买入与卖出闭环。
