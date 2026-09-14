@@ -1,3 +1,5 @@
+import time
+
 from aiohttp import web
 
 from .auth import AuthenticationError, verify_request
@@ -24,9 +26,19 @@ def create_app(db, settings, rpc=None):
         pending = db.conn.execute("SELECT count(*) FROM signals WHERE status IN ('RECEIVED','BUY_PENDING',"
                                   "'BUY_SUBMITTED','SELL_PENDING','SELL_SUBMITTED')").fetchone()[0]
         opened = db.conn.execute("SELECT count(*) FROM positions WHERE status='OPEN'").fetchone()[0]
+        stuck = db.conn.execute(
+            "SELECT count(*) FROM positions WHERE status='POSITION_STUCK'").fetchone()[0]
+        stuck_signals = db.conn.execute(
+            "SELECT count(*) FROM signals WHERE status='POSITION_STUCK'").fetchone()[0]
+        heartbeat = db.state('worker_heartbeat_at')
+        heartbeat_stale = heartbeat is not None and int(time.time()) - heartbeat > 15
         return web.json_response({
-            'service': 'ok', 'database': 'WAL', 'live_trading_enabled': settings.live,
+            'service': 'degraded' if stuck or stuck_signals or heartbeat_stale else 'ok',
+            'database': 'WAL', 'live_trading_enabled': settings.live,
             'execution_adapter': settings.adapter, 'pending_signals': pending, 'open_positions': opened,
+            'stuck_positions': stuck, 'stuck_signals': stuck_signals,
+            'worker_heartbeat_at': heartbeat,
+            'worker_last_error': db.state('worker_last_error'),
             'last_processed_signal_at': db.state('last_processed_signal_at'),
             'rpc_status': getattr(rpc, 'status', 'not_configured'),
         })

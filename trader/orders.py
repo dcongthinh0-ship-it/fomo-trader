@@ -1,5 +1,6 @@
 import hashlib
 import time
+from contextlib import nullcontext
 
 
 def order_id(event_id, side):
@@ -17,19 +18,19 @@ def create_order(db, event_id, side, input_asset, input_amount, expected, minimu
     return dict(db.conn.execute('SELECT * FROM orders WHERE id=?', (oid,)).fetchone())
 
 
-def update_order(db, event_id, side, status, now=None, **fields):
+def update_order(db, event_id, side, status, now=None, commit=True, **fields):
     values = {'status': status, 'updated_at': int(now or time.time()), **fields}
-    with db.conn:
+    with db.conn if commit else nullcontext():
         db.conn.execute('UPDATE orders SET ' + ','.join(f'{key}=?' for key in values) +
                         ' WHERE event_id=? AND side=?', (*values.values(), event_id, side))
 
 
-def attempt(db, event_id, side, status, now=None, **facts):
+def attempt(db, event_id, side, status, now=None, commit=True, **facts):
     now = int(now or time.time())
     sequence = db.conn.execute('SELECT count(*) FROM execution_attempts WHERE event_id=? AND side=?',
                                (event_id, side)).fetchone()[0]
     aid = hashlib.sha256(f'{event_id}:{side}:{now}:{status}:{sequence}'.encode()).hexdigest()
-    with db.conn:
+    with db.conn if commit else nullcontext():
         db.conn.execute('INSERT OR REPLACE INTO execution_attempts VALUES(?,?,?,?,?,?,?,?,?,?)',
                         (aid, event_id, side, facts.get('tx_hash'), facts.get('nonce'),
                          facts.get('request_facts'), facts.get('response_facts'), status,

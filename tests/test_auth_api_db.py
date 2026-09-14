@@ -81,6 +81,22 @@ async def test_health_contains_no_secrets_or_wallet(db, settings):
         body = await response.json()
         assert response.status == 200
         assert body['live_trading_enabled'] is False
+        assert body['service'] == 'ok' and body['stuck_positions'] == 0
         assert not {'private_key', 'shared_secret', 'wallet_address', 'rpc_url'} & body.keys()
+    finally:
+        await client.close()
+
+
+async def test_health_is_degraded_for_stuck_position(db, settings):
+    db.conn.execute(
+        "INSERT INTO positions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ('p', 'e', '0x' + '2' * 40, 'USD', '1', '1', '1', '1.3', 'POSITION_STUCK',
+         '0x' + 'a' * 64, None, 1, None, 1),
+    )
+    client = TestClient(TestServer(create_app(db, settings)))
+    await client.start_server()
+    try:
+        body = await (await client.get('/health')).json()
+        assert body['service'] == 'degraded' and body['stuck_positions'] == 1
     finally:
         await client.close()

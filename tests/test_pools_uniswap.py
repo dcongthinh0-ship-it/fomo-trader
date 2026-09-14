@@ -9,6 +9,7 @@ from eth_utils import keccak
 from trader.execution import ExecutionFailure
 from trader.models import TradeSignal
 from trader.pools import PoolResolver, selector
+from trader.rpc import RPCError
 from trader.uniswap import (
     TRANSFER_TOPIC,
     WETH_WITHDRAWAL_TOPIC,
@@ -289,6 +290,17 @@ async def test_v3_native_buy_builds_deadlined_swaprouter02_multicall(db):
     assert calls[0].startswith(selector('exactInput((bytes,address,uint256,uint256))'))
 
 
+async def test_nonce_is_not_reserved_when_gas_estimation_fails(db):
+    instance = adapter(db)
+    instance.rpc.call = AsyncMock(side_effect=['0x1', RPCError('eth_estimateGas_UNAVAILABLE')])
+    instance.nonce.reserve = AsyncMock()
+
+    with pytest.raises(RPCError, match='eth_estimateGas_UNAVAILABLE'):
+        await instance._base_transaction(POOL, '0x1234')
+
+    instance.nonce.reserve.assert_not_awaited()
+
+
 async def test_v3_native_sell_approves_swaps_and_unwraps_weth(db):
     instance = adapter(db)
     pool = v3_pool()
@@ -425,6 +437,34 @@ async def test_v4_approval_covers_erc20_and_permit2_layers(db):
     await instance._ensure_v4_approval('e', TOKEN, 42)
     instance._approve_exact.assert_awaited_once_with('e', TOKEN, contracts()['permit2'], 42)
     instance._approve_permit2.assert_awaited_once_with('e', TOKEN, 42)
+
+
+async def test_approval_timeout_is_recovered_by_hash_before_any_resubmit(db):
+    instance = adapter(db)
+    tx_hash = '0x' + 'a' * 64
+    instance._base_transaction = AsyncMock(return_value={'nonce': 3})
+    instance._submit = AsyncMock(return_value={'tx_hash': tx_hash, 'nonce': 3})
+    instance.wait_for_receipt = AsyncMock(side_effect=TimeoutError('RECEIPT_TIMEOUT'))
+
+    with pytest.raises(ExecutionFailure, match='APPROVAL_PENDING'):
+        await instance._approve_exact('e', TOKEN, POOL, 42)
+    unknown = db.conn.execute(
+        "SELECT * FROM execution_attempts WHERE side='APPROVAL' AND status='UNKNOWN'").fetchone()
+    assert unknown['tx_hash'] == tx_hash and unknown['nonce'] == 3
+
+    instance._submit.reset_mock()
+    instance.receipt_by_hash = AsyncMock(return_value=None)
+    with pytest.raises(ExecutionFailure, match='APPROVAL_PENDING'):
+        await instance._approve_exact('e', TOKEN, POOL, 42)
+    instance._submit.assert_not_awaited()
+
+    instance.receipt_by_hash.return_value = {'status': '0x1', 'transactionHash': tx_hash}
+    await instance._approve_exact('e', TOKEN, POOL, 42)
+    instance._submit.assert_not_awaited()
+    latest = db.conn.execute(
+        "SELECT status FROM execution_attempts WHERE side='APPROVAL' "
+        'ORDER BY created_at DESC,rowid DESC LIMIT 1').fetchone()
+    assert latest['status'] == 'CONFIRMED'
 
 
 async def test_permit2_allowance_uses_owner_token_and_router(db):

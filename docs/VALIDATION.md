@@ -9,6 +9,9 @@
 - 固定 30% 目标、低于目标不卖、FakeExecutionAdapter 买卖闭环、买卖失败状态。
 - nonce 取链上 pending 与本地保留值的较大者及重启 reconcile。
 - receipt 超时后保留 tx hash，重启只查原交易并恢复建仓，不创建第二笔 BUY。
+- 广播前 RPC 失败复用同一 `CREATED` 订单，gas estimate 失败不消耗 nonce；买卖提交不确定和 approval 超时均按原 tx hash 恢复，不重复发送。
+- 买卖确认后的订单/attempt/仓位/信号原子落库；卖出成功但 proceeds 为零时仓位转 `POSITION_STUCK`，不再卖第二次。
+- 多仓位轮转报价，最早仓位未到止盈线不会饿死后续已达标仓位；健康接口报告 worker 心跳、最近异常和 stuck 数。
 - V2/V3 池官方 Factory、资产与参数识别，V2/V3 直连/单桥路径；V4 pool id 不作为地址调用，V4 单桥候选按 StateView 活跃流动性限量筛选。
 - 精确金额换算、非零最小输出、receipt Transfer 解析。
 - 默认 live=false，以及随机测试密钥的地址匹配/不匹配启动校验；测试密钥不进入 Git。

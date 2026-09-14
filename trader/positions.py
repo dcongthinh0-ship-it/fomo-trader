@@ -1,14 +1,16 @@
 import hashlib
 import time
+from contextlib import nullcontext
 from decimal import Decimal
 
 
-def open_position(db, event_id, token, input_asset, actual_cost, quantity, buy_tx_hash, now=None):
+def open_position(db, event_id, token, input_asset, actual_cost, quantity, buy_tx_hash, now=None,
+                  commit=True):
     now = int(now or time.time())
     cost, qty = Decimal(str(actual_cost)), Decimal(str(quantity))
     pid = hashlib.sha256(f'{event_id}:position'.encode()).hexdigest()
     target = cost * Decimal('1.30')
-    with db.conn:
+    with db.conn if commit else nullcontext():
         db.conn.execute('INSERT OR IGNORE INTO positions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                         (pid, event_id, token.lower(), input_asset, str(cost), str(qty),
                          str(cost / qty) if qty else None, str(target), 'OPEN', buy_tx_hash, None,
@@ -16,9 +18,9 @@ def open_position(db, event_id, token, input_asset, actual_cost, quantity, buy_t
     return dict(db.conn.execute('SELECT * FROM positions WHERE event_id=?', (event_id,)).fetchone())
 
 
-def close_position(db, event_id, tx_hash, now=None):
+def close_position(db, event_id, tx_hash, now=None, commit=True):
     now = int(now or time.time())
-    with db.conn:
+    with db.conn if commit else nullcontext():
         db.conn.execute("UPDATE positions SET status='CLOSED',sell_tx_hash=?,closed_at=?,updated_at=? WHERE event_id=?",
                         (tx_hash, now, now, event_id))
 

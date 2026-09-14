@@ -206,11 +206,11 @@ class UniswapRobinhoodExecutionAdapter:
         return calldata('multicall(uint256,bytes[])', ['uint256', 'bytes[]'], [deadline, calls])
 
     async def _base_transaction(self, to, data, value=0):
-        nonce = await self.nonce.reserve()
-        tx = {'to': to, 'data': data, 'value': value, 'nonce': nonce,
+        tx = {'to': to, 'data': data, 'value': value,
               'chainId': 4663, 'gasPrice': int(await self.rpc.call('eth_gasPrice'), 16)}
         estimate = await self.rpc.call('eth_estimateGas', [{**tx, 'from': self.settings.wallet_address}])
         tx['gas'] = int(int(estimate, 16) * 1.2)
+        tx['nonce'] = await self.nonce.reserve()
         return tx
 
     async def build_buy_transaction(self, signal, pool, amount, minimum):
@@ -354,10 +354,12 @@ class UniswapRobinhoodExecutionAdapter:
         return decode(['uint256'], bytes.fromhex(result[2:]))[0]
 
     async def _approve_exact(self, event_id, token, spender, amount):
+        if await self._recover_pending_approval(event_id):
+            return
         tx = await self._base_transaction(token, calldata('approve(address,uint256)',
                                                           ['address', 'uint256'], [spender, amount]))
-        result = await self._submit(tx)
-        receipt = await self.wait_for_receipt(result['tx_hash'])
+        result = await self._submit_approval(event_id, tx)
+        receipt = await self._wait_approval(event_id, result)
         status = int(receipt.get('status', '0x0'), 16)
         attempt(self.db, event_id, 'APPROVAL', 'CONFIRMED' if status == 1 else 'REVERTED',
                 tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps(receipt))
@@ -373,18 +375,56 @@ class UniswapRobinhoodExecutionAdapter:
         return decode(['uint160', 'uint48', 'uint48'], bytes.fromhex(result[2:]))
 
     async def _approve_permit2(self, event_id, token, amount):
+        if await self._recover_pending_approval(event_id):
+            return
         expiration = min(int(time.time()) + 3600, 2 ** 48 - 1)
         data = calldata('approve(address,address,uint160,uint48)',
                         ['address', 'address', 'uint160', 'uint48'],
                         [token, self.resolver.contracts['universal_router'], amount, expiration])
         tx = await self._base_transaction(self.resolver.contracts['permit2'], data)
-        result = await self._submit(tx)
-        receipt = await self.wait_for_receipt(result['tx_hash'])
+        result = await self._submit_approval(event_id, tx)
+        receipt = await self._wait_approval(event_id, result)
         status = int(receipt.get('status', '0x0'), 16)
         attempt(self.db, event_id, 'APPROVAL', 'CONFIRMED' if status == 1 else 'REVERTED',
                 tx_hash=result['tx_hash'], nonce=result['nonce'], response_facts=dumps(receipt))
         if status != 1:
             raise ExecutionFailure('APPROVAL_REVERTED')
+
+    async def _submit_approval(self, event_id, transaction):
+        try:
+            result = await self._submit(transaction)
+        except SubmissionUnknown as exc:
+            attempt(self.db, event_id, 'APPROVAL', 'UNKNOWN', tx_hash=exc.tx_hash,
+                    nonce=exc.nonce, error_code=exc.code)
+            raise ExecutionFailure('APPROVAL_PENDING') from None
+        attempt(self.db, event_id, 'APPROVAL', 'SUBMITTED', tx_hash=result['tx_hash'],
+                nonce=result['nonce'])
+        return result
+
+    async def _wait_approval(self, event_id, result):
+        try:
+            return await self.wait_for_receipt(result['tx_hash'])
+        except (TimeoutError, RPCError):
+            attempt(self.db, event_id, 'APPROVAL', 'UNKNOWN', tx_hash=result['tx_hash'],
+                    nonce=result['nonce'], error_code='APPROVAL_RECEIPT_PENDING')
+            raise ExecutionFailure('APPROVAL_PENDING') from None
+
+    async def _recover_pending_approval(self, event_id):
+        row = self.db.conn.execute(
+            "SELECT * FROM execution_attempts WHERE event_id=? AND side='APPROVAL' "
+            "ORDER BY created_at DESC,rowid DESC LIMIT 1",
+            (event_id,),
+        ).fetchone()
+        if not row or row['status'] not in ('SUBMITTED', 'UNKNOWN'):
+            return False
+        receipt = await self.receipt_by_hash(row['tx_hash'])
+        if not receipt:
+            raise ExecutionFailure('APPROVAL_PENDING')
+        status = int(receipt.get('status', '0x0'), 16)
+        attempt(self.db, event_id, 'APPROVAL', 'CONFIRMED' if status == 1 else 'REVERTED',
+                tx_hash=row['tx_hash'], nonce=row['nonce'], response_facts=dumps(receipt),
+                error_code=None if status == 1 else 'APPROVAL_REVERTED')
+        return status == 1
 
     async def _ensure_v4_approval(self, event_id, token, amount):
         if not 0 < amount <= MAX_UINT160:
