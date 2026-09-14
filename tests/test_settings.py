@@ -8,7 +8,12 @@ def clear(monkeypatch):
     for name in ('LIVE_TRADING_ENABLED', 'BUY_AMOUNT_MODE', 'BUY_ASSET_ADDRESS',
                  'TRADER_WALLET_ADDRESS', 'TRADER_PRIVATE_KEY_FILE',
                  'ROBINHOOD_TRADING_RPC_PROVIDER', 'ROBINHOOD_PUBLIC_RPC_URL',
-                 'ROBINHOOD_ALCHEMY_RPC_URL', 'ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT'):
+                 'ROBINHOOD_ALCHEMY_RPC_URL', 'ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND',
+                 'ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT',
+                 'ROBINHOOD_PUBLIC_RPC_REQUESTS_PER_SECOND',
+                 'ROBINHOOD_PUBLIC_RPC_MAX_IN_FLIGHT',
+                 'ROBINHOOD_ALCHEMY_RPC_REQUESTS_PER_SECOND',
+                 'ROBINHOOD_ALCHEMY_RPC_MAX_IN_FLIGHT'):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -54,17 +59,22 @@ def test_rpc_provider_can_switch_between_public_and_alchemy(monkeypatch, provide
     monkeypatch.setenv('ROBINHOOD_TRADING_RPC_PROVIDER', provider)
     monkeypatch.setenv('ROBINHOOD_PUBLIC_RPC_URL', 'https://public.example')
     monkeypatch.setenv('ROBINHOOD_ALCHEMY_RPC_URL', 'https://alchemy.example/v2/test-key')
+    monkeypatch.setenv('ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND',
+                       '2' if provider == 'public' else '20')
+    monkeypatch.setenv('ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT',
+                       '1' if provider == 'public' else '8')
     monkeypatch.setenv('ROBINHOOD_TRADING_RPC_URL', 'https://legacy.example')
     settings = Settings()
     assert settings.rpc_provider == provider
     assert settings.rpc_url == expected
-    assert settings.rpc_max_in_flight == (2 if provider == 'public' else 8)
+    assert settings.rpc_rps == (2 if provider == 'public' else 20)
+    assert settings.rpc_max_in_flight == (1 if provider == 'public' else 8)
 
 
 def test_rpc_max_in_flight_can_be_tuned_per_provider(monkeypatch):
     clear(monkeypatch)
     monkeypatch.setenv('ROBINHOOD_TRADING_RPC_PROVIDER', 'public')
-    monkeypatch.setenv('ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT', '4')
+    monkeypatch.setenv('ROBINHOOD_PUBLIC_RPC_MAX_IN_FLIGHT', '4')
     assert Settings().rpc_max_in_flight == 4
 
 

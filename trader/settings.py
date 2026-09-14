@@ -51,10 +51,15 @@ class Settings:
         else:
             self.rpc_url = os.getenv('ROBINHOOD_TRADING_RPC_URL', '').strip()
         self.rpc_provider = provider or 'legacy'
-        self.rpc_rps = float(os.getenv('ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND', '5'))
-        default_in_flight = '2' if self.rpc_provider in ('public', 'legacy') else '8'
+        provider_prefix = 'ROBINHOOD_ALCHEMY' if self.rpc_provider == 'alchemy' else 'ROBINHOOD_PUBLIC'
+        default_rps = '20' if self.rpc_provider == 'alchemy' else '2'
+        self.rpc_rps = float(os.getenv(
+            'ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND',
+            os.getenv(f'{provider_prefix}_RPC_REQUESTS_PER_SECOND', default_rps)))
+        default_in_flight = '8' if self.rpc_provider == 'alchemy' else '1'
         self.rpc_max_in_flight = int(os.getenv(
-            'ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT', default_in_flight))
+            'ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT',
+            os.getenv(f'{provider_prefix}_RPC_MAX_IN_FLIGHT', default_in_flight)))
         if self.rpc_max_in_flight <= 0:
             raise ValueError('ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT must be positive')
         self.health_port = int(os.getenv('HEALTH_PORT', '8090'))

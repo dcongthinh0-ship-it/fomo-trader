@@ -37,7 +37,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 7. 交易 RPC 在进程启动时通过 `ROBINHOOD_TRADING_RPC_PROVIDER=public|alchemy` 选择；两种端点复用同一 RPC 客户端，不做静默自动切换。
 8. V4 同币对可能存在大量 PoolKey；解析器以只读 Multicall3 一次读取 StateView 活跃流动性，只保留最高的 8 个非零候选并并发报价，交易仍只提交给官方 Universal Router。
 9. 单个进程内缓存不可变的 V4 PoolKey、币对候选和已核验合约代码；独立的池字段/标准 V3 fee tier 查询并发发起，缓存不替代每次交易的实时 Quoter 报价。
-10. RPC 同时限制每秒请求起始数和在途请求数；public 默认 2 个在途，Alchemy 默认 8 个，可用 `ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT` 显式覆盖，避免公共节点因并发突刺拒绝整条路由。
+10. RPC 同时限制每秒请求起始数和在途请求数；public 默认 `2 req/s + 1` 个在途，Alchemy 默认 `20 req/s + 8` 个在途，并有各自独立环境变量。旧的 `ROBINHOOD_TRADING_RPC_*` 仍可统一覆盖，避免公共节点因并发突刺拒绝整条路由，同时让 Alchemy 保持低延迟。
 11. gas price 与 estimate 成功后才保留 nonce；链上已成功的买卖以一个 SQLite 事务同时确认订单、写 execution attempt、开/关仓和推进信号状态，避免重启时出现半完成状态。
 12. `CREATED` 且没有 tx hash 的订单属于可安全重试的广播前状态；瞬时 RPC 故障会回到 `RECEIVED/OPEN`。链上卖出成功但 proceeds 无法解析时直接标记 `POSITION_STUCK`，禁止对已经卖出的仓位再次发送卖单。
 13. ERC-20/Permit2 approval 使用独立的 `APPROVAL` execution attempt；提交不确定或 receipt 超时只按原 tx hash 恢复，在确认或回滚前不得发送第二笔 approval，也不得把 approval 的 tx hash 写入 BUY/SELL 订单。
