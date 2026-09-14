@@ -65,9 +65,11 @@ class FakeRPC:
         self.token1 = token1
         self.code_calls = []
         self.logs = logs or []
+        self.log_calls = 0
 
     async def call(self, method, params=None):
         if method == 'eth_getLogs':
+            self.log_calls += 1
             topics = (params or [{}])[0].get('topics') or []
             result = self.logs
             if len(topics) > 1 and topics[1]:
@@ -166,6 +168,20 @@ async def test_v4_pool_key_is_discovered_without_calling_pool_id_as_contract():
 async def test_v4_pool_key_discovery_fails_closed_when_initialize_log_is_missing():
     with pytest.raises(ExecutionFailure, match='V4_POOL_KEY_NOT_FOUND'):
         await PoolResolver(FakeRPC(), contracts(), INPUT).resolve_pool(signal('0x' + 'd' * 64))
+
+
+async def test_v4_immutable_key_and_contract_code_checks_are_cached():
+    key = {'currency0': TOKEN, 'currency1': INPUT, 'fee': 3000,
+           'tick_spacing': 60, 'hooks': ZERO_ADDRESS}
+    rpc = FakeRPC(logs=[initialize_log(key)])
+    resolver = PoolResolver(rpc, contracts(), INPUT)
+
+    await resolver.resolve_pool(signal(pool_id(key)))
+    first_code_calls = len(rpc.code_calls)
+    await resolver.resolve_pool(signal(pool_id(key)))
+
+    assert rpc.log_calls == 1
+    assert len(rpc.code_calls) == first_code_calls
 
 
 async def test_v4_pool_discovers_native_single_bridge_route():

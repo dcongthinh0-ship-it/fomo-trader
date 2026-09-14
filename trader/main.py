@@ -23,7 +23,8 @@ async def serve():
     settings.shared_secret()  # Fail at startup, never accept unauthenticated signals.
     db = DB(settings.database)
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=8)) as session:
-        rpc = RPC(session, settings.rpc_url, settings.rpc_rps) if settings.rpc_url else None
+        rpc = RPC(session, settings.rpc_url, settings.rpc_rps,
+                  max_in_flight=settings.rpc_max_in_flight) if settings.rpc_url else None
         if settings.adapter == 'fake':
             if settings.live:
                 raise ValueError('fake adapter cannot run with live trading enabled')

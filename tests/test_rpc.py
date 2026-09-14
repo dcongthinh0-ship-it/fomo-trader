@@ -63,3 +63,19 @@ async def test_rate_limit_response_is_retried():
 
     assert await rpc.call('eth_call', retries=1) == '0x123'
     assert len(session.starts) == 2
+
+
+async def test_generic_upstream_server_error_is_retried_but_revert_is_not():
+    transient = FakeSession([
+        FakeResponse(200, {'error': {'code': -32000, 'message': 'upstream request failed'}}),
+        FakeResponse(200, {'result': '0x123'}),
+    ])
+    assert await RPC(transient, 'https://rpc.invalid', 1000).call(
+        'eth_call', retries=1) == '0x123'
+
+    reverted = FakeSession([
+        FakeResponse(200, {'error': {'code': -32000, 'message': 'execution reverted'}}),
+    ])
+    with pytest.raises(RPCResponseError):
+        await RPC(reverted, 'https://rpc.invalid', 1000).call('eth_call', retries=1)
+    assert len(reverted.starts) == 1

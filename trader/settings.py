@@ -52,6 +52,11 @@ class Settings:
             self.rpc_url = os.getenv('ROBINHOOD_TRADING_RPC_URL', '').strip()
         self.rpc_provider = provider or 'legacy'
         self.rpc_rps = float(os.getenv('ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND', '5'))
+        default_in_flight = '2' if self.rpc_provider in ('public', 'legacy') else '8'
+        self.rpc_max_in_flight = int(os.getenv(
+            'ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT', default_in_flight))
+        if self.rpc_max_in_flight <= 0:
+            raise ValueError('ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT must be positive')
         self.health_port = int(os.getenv('HEALTH_PORT', '8090'))
         order = self.config['order']
         self.amount_mode = os.getenv('BUY_AMOUNT_MODE', order['amount_mode']).upper()

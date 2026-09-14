@@ -18,11 +18,12 @@ class RPCResponseError(RPCError):
 
 
 class RPC:
-    def __init__(self, session, url, requests_per_second=5, timeout=8):
+    def __init__(self, session, url, requests_per_second=5, timeout=8, max_in_flight=2):
         self.session, self.url = session, url
         self.interval = 1 / max(float(requests_per_second), 0.1)
         self.timeout, self.next_request, self.counter = timeout, 0.0, 0
         self._rate_lock = asyncio.Lock()
+        self._in_flight = asyncio.Semaphore(max(1, int(max_in_flight)))
         self.status = 'not_checked'
 
     async def _throttle(self):
@@ -34,29 +35,34 @@ class RPC:
     def _retryable_response(status, error):
         message = str((error or {}).get('message', '')).lower()
         code = (error or {}).get('code')
-        return status == 429 or status >= 500 or code == 429 or any(
-            phrase in message for phrase in (
-                'rate limit', 'too many requests', 'temporarily unavailable', 'timeout'))
+        deterministic = any(phrase in message for phrase in (
+            'execution reverted', 'invalid argument', 'method not found',
+            'insufficient funds', 'nonce too low', 'replacement transaction underpriced'))
+        return not deterministic and (
+            status == 429 or status >= 500 or code in (429, -32000, -32005, -32603) or any(
+                phrase in message for phrase in (
+                    'rate limit', 'too many requests', 'temporarily unavailable', 'timeout')))
 
     async def call(self, method, params=None, retries=2):
         for attempt in range(retries + 1):
             await self._throttle()
             self.counter += 1
             try:
-                async with self.session.post(
-                        self.url, json={'jsonrpc': '2.0', 'id': self.counter,
-                                        'method': method, 'params': params or []},
-                        timeout=aiohttp.ClientTimeout(total=self.timeout)) as response:
-                    body = await response.json(content_type=None)
-                    error = body.get('error')
-                    if response.status != 200 or error:
-                        if not self._retryable_response(response.status, error):
-                            self.status = 'degraded'
-                            raise RPCResponseError(
-                                method, (error or {}).get('code'), (error or {}).get('message'))
-                        raise RPCError(f'{method}_FAILED')
-                    self.status = 'ok'
-                    return body['result']
+                async with self._in_flight:
+                    async with self.session.post(
+                            self.url, json={'jsonrpc': '2.0', 'id': self.counter,
+                                            'method': method, 'params': params or []},
+                            timeout=aiohttp.ClientTimeout(total=self.timeout)) as response:
+                        body = await response.json(content_type=None)
+                        error = body.get('error')
+                        if response.status != 200 or error:
+                            if not self._retryable_response(response.status, error):
+                                self.status = 'degraded'
+                                raise RPCResponseError(
+                                    method, (error or {}).get('code'), (error or {}).get('message'))
+                            raise RPCError(f'{method}_FAILED')
+                        self.status = 'ok'
+                        return body['result']
             except RPCResponseError:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError, RPCError):

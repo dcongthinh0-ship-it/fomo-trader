@@ -1,3 +1,5 @@
+import asyncio
+
 from eth_abi import decode, encode
 from eth_utils import keccak
 
@@ -32,6 +34,9 @@ class PoolResolver:
         self.contracts = {key: value.lower() for key, value in contracts.items()}
         self.input_asset = input_asset.lower()
         self.v4_input_asset = (v4_input_asset or input_asset).lower()
+        self._verified_code = set()
+        self._v4_key_cache = {}
+        self._v4_pair_cache = {}
 
     async def _call(self, address, signature, types=(), values=()):
         return await self.rpc.eth_call(address, calldata(signature, types, values))
@@ -41,10 +46,12 @@ class PoolResolver:
             return 'v4'
         if not ADDRESS.fullmatch(str(hint)):
             raise ExecutionFailure('INVALID_POOL_HINT')
-        if await self.rpc.get_code(hint) in ('0x', '0x0', None):
+        code, factory_raw = await asyncio.gather(
+            self.rpc.get_code(hint), self._call(hint, 'factory()'))
+        if code in ('0x', '0x0', None):
             raise ExecutionFailure('POOL_CODE_MISSING')
         try:
-            factory = word_address(await self._call(hint, 'factory()'))
+            factory = word_address(factory_raw)
         except Exception:
             raise ExecutionFailure('POOL_FACTORY_UNREADABLE') from None
         if factory == self.contracts['v2_factory']:
@@ -59,8 +66,9 @@ class PoolResolver:
         version = await self.identify_pool_version(hint)
         if version == 'v4':
             return await self._resolve_v4(signal, hint, snapshot.get('pool_key'))
-        token0 = word_address(await self._call(hint, 'token0()'))
-        token1 = word_address(await self._call(hint, 'token1()'))
+        token0_raw, token1_raw = await asyncio.gather(
+            self._call(hint, 'token0()'), self._call(hint, 'token1()'))
+        token0, token1 = word_address(token0_raw), word_address(token1_raw)
         if signal.token_address.lower() not in {token0, token1}:
             raise ExecutionFailure('POOL_ASSET_MISMATCH')
         other = token1 if token0 == signal.token_address.lower() else token0
@@ -91,8 +99,10 @@ class PoolResolver:
                 path = [self.input_asset, other, signal.token_address.lower()]
             result.update(path_buy=path, path_sell=list(reversed(path)))
         else:
-            fee = decode(['uint24'], bytes.fromhex((await self._call(hint, 'fee()'))[2:]))[0]
-            spacing = decode(['int24'], bytes.fromhex((await self._call(hint, 'tickSpacing()'))[2:]))[0]
+            fee_raw, spacing_raw = await asyncio.gather(
+                self._call(hint, 'fee()'), self._call(hint, 'tickSpacing()'))
+            fee = decode(['uint24'], bytes.fromhex(fee_raw[2:]))[0]
+            spacing = decode(['int24'], bytes.fromhex(spacing_raw[2:]))[0]
             result.update(factory=self.contracts['v3_factory'], router=self.contracts['v3_router'],
                           quoter=self.contracts['v3_quoter'], fee=fee, tick_spacing=spacing)
             if other == self.input_asset:
@@ -109,16 +119,28 @@ class PoolResolver:
     async def _discover_v3_bridge_routes(self, route_asset, token, target_fee):
         routes = []
         seen = set()
-        for fee in (100, 500, 2500, 3000, 10000):
-            raw = await self._call(
+        fees = (100, 500, 2500, 3000, 10000)
+        pools = await asyncio.gather(*(
+            self._call(
                 self.contracts['v3_factory'], 'getPool(address,address,uint24)',
                 ['address', 'address', 'uint24'], [self.input_asset, route_asset, fee])
+            for fee in fees
+        ))
+
+        async def verify(fee, raw):
             bridge = word_address(raw)
             if bridge == ZERO_ADDRESS or (bridge, fee) in seen:
-                continue
-            if await self.rpc.get_code(bridge) in ('0x', '0x0', None):
-                continue
-            if word_address(await self._call(bridge, 'factory()')) != self.contracts['v3_factory']:
+                return None
+            code, factory = await asyncio.gather(
+                self.rpc.get_code(bridge), self._call(bridge, 'factory()'))
+            if (code in ('0x', '0x0', None)
+                    or word_address(factory) != self.contracts['v3_factory']):
+                return None
+            return bridge
+
+        verified = await asyncio.gather(*(verify(fee, raw) for fee, raw in zip(fees, pools, strict=True)))
+        for fee, bridge in zip(fees, verified, strict=True):
+            if bridge is None:
                 continue
             seen.add((bridge, fee))
             routes.append({
@@ -150,10 +172,8 @@ class PoolResolver:
                          [currency0, currency1, normalized['fee'], normalized['tick_spacing'], hooks])
         if '0x' + keccak(encoded).hex() != pool_id.lower():
             raise ExecutionFailure('V4_POOL_ID_MISMATCH')
-        for contract in ('v4_pool_manager', 'v4_state_view', 'v4_quoter',
-                         'universal_router', 'multicall3'):
-            if await self.rpc.get_code(self.contracts[contract]) in ('0x', '0x0', None):
-                raise ExecutionFailure('VERIFIED_ROUTER_CODE_MISSING')
+        await self._verify_contract_codes(
+            'v4_pool_manager', 'v4_state_view', 'v4_quoter', 'universal_router', 'multicall3')
         result = {'version': 'v4', 'pool_id': pool_id.lower(), 'pool_key': normalized,
                   'pool_manager': self.contracts['v4_pool_manager'],
                   'quoter': self.contracts['v4_quoter'],
@@ -172,6 +192,9 @@ class PoolResolver:
         return result
 
     async def _discover_v4_key(self, pool_id):
+        cached = self._v4_key_cache.get(pool_id.lower())
+        if cached:
+            return dict(cached)
         logs = await self.rpc.call('eth_getLogs', [{
             'address': self.contracts['v4_pool_manager'],
             'fromBlock': '0x0',
@@ -182,28 +205,45 @@ class PoolResolver:
             raise ExecutionFailure('V4_POOL_KEY_NOT_FOUND')
         if len(logs) != 1:
             raise ExecutionFailure('V4_POOL_KEY_AMBIGUOUS')
-        return self._decode_v4_initialize(logs[0])
+        key = self._decode_v4_initialize(logs[0])
+        self._v4_key_cache[pool_id.lower()] = dict(key)
+        return key
 
     async def _discover_v4_keys_between(self, left, right):
         currency0, currency1 = sorted((left.lower(), right.lower()))
-        logs = await self.rpc.call('eth_getLogs', [{
-            'address': self.contracts['v4_pool_manager'],
-            'fromBlock': '0x0',
-            'toBlock': 'latest',
-            'topics': [V4_INITIALIZE_TOPIC, None, address_topic(currency0), address_topic(currency1)],
-        }])
-        result = []
-        for item in logs or []:
-            try:
-                key = self._decode_v4_initialize(item)
-            except ExecutionFailure:
-                continue
-            if {key['currency0'], key['currency1']} == {left.lower(), right.lower()}:
-                result.append((item['topics'][1].lower(), key))
+        pair = (currency0, currency1)
+        result = self._v4_pair_cache.get(pair)
+        if result is None:
+            logs = await self.rpc.call('eth_getLogs', [{
+                'address': self.contracts['v4_pool_manager'],
+                'fromBlock': '0x0',
+                'toBlock': 'latest',
+                'topics': [V4_INITIALIZE_TOPIC, None, address_topic(currency0), address_topic(currency1)],
+            }])
+            result = []
+            for item in logs or []:
+                try:
+                    key = self._decode_v4_initialize(item)
+                except ExecutionFailure:
+                    continue
+                if {key['currency0'], key['currency1']} == {left.lower(), right.lower()}:
+                    result.append((item['topics'][1].lower(), key))
+            self._v4_pair_cache[pair] = result
         if not result:
             return []
         ranked = await self._rank_v4_keys_by_liquidity(result)
         return [key for liquidity, key in ranked[:MAX_V4_BRIDGE_CANDIDATES] if liquidity > 0]
+
+    async def _verify_contract_codes(self, *names):
+        pending = [(name, self.contracts[name]) for name in names
+                   if self.contracts[name] not in self._verified_code]
+        if not pending:
+            return
+        codes = await asyncio.gather(*(self.rpc.get_code(address) for _, address in pending))
+        for (_, address), code in zip(pending, codes, strict=True):
+            if code in ('0x', '0x0', None):
+                raise ExecutionFailure('VERIFIED_ROUTER_CODE_MISSING')
+            self._verified_code.add(address)
 
     async def _rank_v4_keys_by_liquidity(self, identified_keys):
         calls = [(
