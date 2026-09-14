@@ -24,6 +24,8 @@
 
 同日对真实信号 `0x59ce…ece4` 的非直连 V4 池完成核验：链上存在 204 个原生 ETH/桥接币 PoolKey；代码通过 Multicall3 单次读取 StateView 活跃流动性，筛至 8 个候选后由 V4Quoter 选出可成交路径，生成的 Universal Router `SWAP_EXACT_IN → SETTLE_ALL → TAKE_ALL` 两池原子买入 calldata 经 `eth_call` 返回 `0x`。解析、报价、模拟约 5768/2278/495 ms；没有私钥、签名、广播或余额变化。
 
+同日对 V2 WETH/USDG Pair `0x8803…1c4d` 完成正反向非零报价与原生 ETH 买入模拟，V2Router02 `eth_call` 返回 `0x`；解析、报价、模拟约 2606/526/491 ms。至此 V2、V3、V4 买入 calldata 均有真实链上只读成功样本。
+
 ## 尚未执行
 
 - Robinhood Chain fork/testnet 的真实签名买入与卖出闭环。

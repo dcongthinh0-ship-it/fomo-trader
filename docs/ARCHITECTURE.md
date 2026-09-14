@@ -52,4 +52,4 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 ## 验证
 
 测试按 auth/API、数据库幂等、V2/V3/V4 直连与同协议单桥池、V3/V4 多跳 calldata、Permit2、nonce/receipt 恢复、FakeExecutionAdapter 完整闭环和 Docker 双服务分层。自动测试不得访问主网、真实钱包或真实资金；已使用官方公共 RPC 对真实 V3 和 V4 池完成无签名、无广播的 Quoter 与 Router `eth_call` 校验。
-最近一次本地双服务交接的计数与耗时记录见 `docs/VALIDATION.md`。
+真实只读验证还包括 V2 WETH/USDG 池的正反报价及原生 ETH 买入 Router `eth_call`；最近一次本地双服务交接的计数与耗时记录见 `docs/VALIDATION.md`。

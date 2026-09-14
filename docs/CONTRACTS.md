@@ -33,3 +33,5 @@
 - V4：从 PoolManager 对应 `Initialize` 日志自动恢复 PoolKey（也兼容信号直接携带），重新计算并核对 pool id；检查官方 PoolManager/StateView/V4Quoter/UniversalRouter bytecode。直连使用 `quoteExactInputSingle`；非直连用只读 Multicall3 批量读取 StateView 活跃流动性，筛选最多 8 个非零单桥后并发调用 `quoteExactInput`，选择最佳报价。Universal Router 使用 `SWAP_EXACT_IN_SINGLE` 或 `SWAP_EXACT_IN` 完成原子多池精确输入买卖，并支持原生 ETH 结算、ERC-20 → Permit2 → Universal Router 精确额度授权，以及买入 token/卖出 proceeds 的 receipt 解析。从不对 32 字节 pool id 发合约调用。
 
 2026-09-11 使用官方公共 RPC 对已初始化的原生 ETH/USDG V4 池完成了只读验证：V4Quoter 返回非零报价，代码生成的 Universal Router calldata 经 `eth_call` 成功返回 `0x`。2026-09-15 又对监控真实命中的 V3 Token/WETH 池完成 QuoterV2 非零报价与 SwapRouter02 原生 ETH 买入 `eth_call`；池解析、报价和模拟分别约 2677 ms、269 ms 和 284 ms。同日对此前无法直连的真实 V4 信号 `0x59ce…ece4` 完成 204 个桥接 PoolKey 的批量流动性筛选、8 候选报价和两池原子买入模拟，Universal Router 返回 `0x`；解析、报价、模拟约 5768/2278/495 ms，后续低延迟阶段继续优化。所有验证均没有私钥、签名、广播或资金变化；所有版本仍受全局 live 开关和上表“当前允许实盘”边界约束。
+
+2026-09-15 对 V2 WETH/USDG Pair `0x8803…1c4d` 完成 Factory、bytecode、非零 reserves、正反向 `getAmountsOut` 和原生 ETH 买入模拟；Router `eth_call` 返回 `0x`，解析、报价、模拟约 2606/526/491 ms。由此 V2、V3、V4 三种买入编码均已有真实链上只读成功样本。
