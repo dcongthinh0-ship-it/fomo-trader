@@ -22,7 +22,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 - `auth.py`、`models.py`、`signals.py`、`api.py`：通信认证、验证、幂等接收和健康接口。
 - `db.py`：signals/orders/positions/execution_attempts/nonce_state 持久化；签名、广播、approval 与 receipt 事实分步留痕。
 - `execution.py`、`worker.py`：适配器协议和可恢复买卖状态机。
-- `rpc.py`、`nonce.py`：隔离 RPC、有限重试、nonce 协调与恢复。
+- `rpc.py`、`nonce.py`：隔离 RPC、并发安全的请求起始速率限制、仅瞬时故障有限重试、确定性 JSON-RPC 拒绝快速失败、nonce 协调与恢复。
 - `pools.py`、`uniswap.py`：官方部署核验、池识别、V2/V3 直接与同协议单桥、V3 QuoterV2 + SwapRouter02，以及 V4 PoolKey 恢复、StateView/Multicall3 活跃流动性筛选、V4Quoter 多池报价、Universal Router 多池买卖、Permit2、签名与 receipt 解析。
 - `orders.py`、`positions.py`：唯一订单和 30% 全仓止盈领域写入。
 

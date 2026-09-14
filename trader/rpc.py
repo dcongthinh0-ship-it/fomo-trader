@@ -11,17 +11,36 @@ class RPCError(RuntimeError):
     pass
 
 
+class RPCResponseError(RPCError):
+    def __init__(self, method, code=None, message=''):
+        super().__init__(f'{method}_REJECTED')
+        self.method, self.code, self.message = method, code, str(message)
+
+
 class RPC:
     def __init__(self, session, url, requests_per_second=5, timeout=8):
         self.session, self.url = session, url
         self.interval = 1 / max(float(requests_per_second), 0.1)
         self.timeout, self.next_request, self.counter = timeout, 0.0, 0
+        self._rate_lock = asyncio.Lock()
         self.status = 'not_checked'
+
+    async def _throttle(self):
+        async with self._rate_lock:
+            await asyncio.sleep(max(0, self.next_request - time.monotonic()))
+            self.next_request = time.monotonic() + self.interval
+
+    @staticmethod
+    def _retryable_response(status, error):
+        message = str((error or {}).get('message', '')).lower()
+        code = (error or {}).get('code')
+        return status == 429 or status >= 500 or code == 429 or any(
+            phrase in message for phrase in (
+                'rate limit', 'too many requests', 'temporarily unavailable', 'timeout'))
 
     async def call(self, method, params=None, retries=2):
         for attempt in range(retries + 1):
-            await asyncio.sleep(max(0, self.next_request - time.monotonic()))
-            self.next_request = time.monotonic() + self.interval
+            await self._throttle()
             self.counter += 1
             try:
                 async with self.session.post(
@@ -29,10 +48,17 @@ class RPC:
                                         'method': method, 'params': params or []},
                         timeout=aiohttp.ClientTimeout(total=self.timeout)) as response:
                     body = await response.json(content_type=None)
-                    if response.status != 200 or body.get('error'):
+                    error = body.get('error')
+                    if response.status != 200 or error:
+                        if not self._retryable_response(response.status, error):
+                            self.status = 'degraded'
+                            raise RPCResponseError(
+                                method, (error or {}).get('code'), (error or {}).get('message'))
                         raise RPCError(f'{method}_FAILED')
                     self.status = 'ok'
                     return body['result']
+            except RPCResponseError:
+                raise
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError, RPCError):
                 self.status = 'degraded'
                 if attempt == retries:
