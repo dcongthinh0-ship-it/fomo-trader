@@ -17,7 +17,8 @@ def worker_settings(live=True, max_sell_attempts=3, amount='10', max_open_positi
     return SimpleNamespace(live=live, amount=Decimal(amount), amount_mode='USD',
                            buy_slippage_bps=500, sell_slippage_bps=500,
                            wallet_address='0x' + '1' * 40, max_sell_attempts=max_sell_attempts,
-                           max_open_positions=max_open_positions, price_poll_seconds=1)
+                           max_open_positions=max_open_positions, price_poll_seconds=1,
+                           position_reconcile_seconds=30)
 
 
 def accept(db, payload, expires=1000):
@@ -194,6 +195,79 @@ async def test_sell_failure_keeps_open_then_marks_stuck(db, valid_payload):
     assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'POSITION_STUCK'
 
 
+async def test_zero_quote_never_consumes_terminal_sell_failure_budget(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter()
+    adapter.quote_full_sell = AsyncMock(side_effect=ExecutionFailure('ZERO_QUOTE'))
+    worker = TradingWorker(db, adapter, worker_settings(max_sell_attempts=1))
+    await worker.buy_once(now=101)
+
+    assert await worker.sell_once(now=102)
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'OPEN'
+    signal = db.conn.execute('SELECT status,last_error FROM signals').fetchone()
+    assert tuple(signal) == ('OPEN', 'ZERO_QUOTE')
+    retry = db.conn.execute(
+        "SELECT status,error_code FROM execution_attempts WHERE side='SELL'").fetchone()
+    assert tuple(retry) == ('RETRYABLE', 'ZERO_QUOTE')
+
+
+async def test_transient_sell_quote_rpc_error_keeps_position_open(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter()
+    adapter.quote_full_sell = AsyncMock(side_effect=RPCError('eth_call_UNAVAILABLE'))
+    worker = TradingWorker(db, adapter, worker_settings(max_sell_attempts=1))
+    await worker.buy_once(now=101)
+
+    assert await worker.sell_once(now=102)
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'OPEN'
+    assert db.conn.execute('SELECT last_error FROM signals').fetchone()[0] == 'RPC_TRANSIENT'
+    assert db.conn.execute(
+        "SELECT count(*) FROM execution_attempts WHERE side='SELL' AND status='FAILED'"
+    ).fetchone()[0] == 0
+
+
+async def test_zero_balance_reconciliation_closes_manually_sold_position(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(wallet_token_balance=Decimal(0))
+    worker = TradingWorker(db, adapter, worker_settings())
+    await worker.buy_once(now=101)
+
+    assert await worker.reconcile_positions_once(now=102) == 1
+    position = db.conn.execute('SELECT status,closed_at FROM positions').fetchone()
+    signal = db.conn.execute('SELECT status,last_error FROM signals').fetchone()
+    reconciled = db.conn.execute(
+        "SELECT status,error_code FROM execution_attempts WHERE side='RECONCILE'").fetchone()
+    assert tuple(position) == ('CLOSED', 102)
+    assert tuple(signal) == ('CLOSED', None)
+    assert tuple(reconciled) == ('CONFIRMED', 'ONCHAIN_BALANCE_ZERO')
+
+
+async def test_stuck_zero_quote_position_reopens_when_balance_remains(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(wallet_token_balance=Decimal(100))
+    worker = TradingWorker(db, adapter, worker_settings())
+    await worker.buy_once(now=101)
+    with db.conn:
+        db.conn.execute("UPDATE positions SET status='POSITION_STUCK'")
+        db.conn.execute("UPDATE signals SET status='POSITION_STUCK',last_error='ZERO_QUOTE'")
+
+    assert await worker.reconcile_positions_once(now=102) == 1
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'OPEN'
+    signal = db.conn.execute('SELECT status,last_error FROM signals').fetchone()
+    assert tuple(signal) == ('OPEN', None)
+
+
+async def test_partial_manual_sell_is_detected_without_automatic_resale(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(wallet_token_balance=Decimal(50))
+    worker = TradingWorker(db, adapter, worker_settings())
+    await worker.buy_once(now=101)
+
+    assert await worker.reconcile_positions_once(now=102) == 1
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'POSITION_STUCK'
+    assert db.conn.execute('SELECT last_error FROM signals').fetchone()[0] == 'MANUAL_BALANCE_MISMATCH'
+
+
 async def test_reverted_sell_receipt_does_not_close_position(db, valid_payload):
     accept(db, valid_payload)
     adapter = FakeExecutionAdapter(sell_quote=Decimal('14'), fail_sell='receipt')
@@ -231,6 +305,10 @@ async def test_ambiguous_sell_submission_recovers_without_second_sell(db, valid_
     assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'SELL_SUBMITTED'
     order = db.conn.execute("SELECT * FROM orders WHERE side='SELL'").fetchone()
     assert order['status'] == 'UNKNOWN' and order['tx_hash'] == sell_hash
+
+    adapter.wallet_token_balance = Decimal(0)
+    assert await worker.reconcile_positions_once(now=102) == 0
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'OPEN'
 
     restarted_adapter = FakeExecutionAdapter(sell_received=Decimal('14'))
     restarted_adapter.submit_sell = AsyncMock()

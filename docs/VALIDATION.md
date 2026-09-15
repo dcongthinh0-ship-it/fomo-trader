@@ -22,6 +22,8 @@
 - public 模式将广播定向到官方 Sequencer、只读与 receipt 查询保留官方公共 RPC；交易哈希统一规范成 `0x` 前缀。广播未知的 BUY 过期后只有在 receipt 与 transaction 均不存在时才以 `BROADCAST_NOT_FOUND` 安全终止，不补买并重新对账 nonce。
 - 交易使用 EIP-1559 type 2，默认 `maxFeePerGas = eth_gasPrice × 2` 且零 priority fee；gas 模拟请求中的 type/fee/value/chain id 均按 JSON-RPC quantity 编码。本地签名保留整数，最终 RPC 错误保留 code/message 供定位。
 - 启动 nonce 对账遭遇临时 RPC 错误时，API 保持在线并标记 degraded，后台退避重试；对账成功前 worker 不运行，对账成功后才处理仍在有效期内的信号。
+- V3/V4 多候选报价测试区分确定性回滚与瞬时 RPC：前者可淘汰单个候选，后者原样上抛且不得生成 `ZERO_QUOTE`；卖出侧真实零报价只记为可重试，不消耗永久失败预算。
+- 持仓余额对账覆盖三种状态：余额为零自动关闭手动清仓、本地旧 `ZERO_QUOTE` 卡死且余额存在时恢复监控、部分手动卖出造成数量不一致时保持安全卡死；待确认 SELL 不参与余额捷径。
 
 ## 只读主网核验
 

@@ -12,9 +12,10 @@ class RPCError(RuntimeError):
 
 
 class RPCResponseError(RPCError):
-    def __init__(self, method, code=None, message=''):
+    def __init__(self, method, code=None, message='', retryable=False):
         super().__init__(f'{method}_REJECTED')
         self.method, self.code, self.message = method, code, str(message)
+        self.retryable = bool(retryable)
 
 
 class RPC:
@@ -66,7 +67,7 @@ class RPC:
                             if attempt == retries and error:
                                 self.status = 'degraded'
                                 raise RPCResponseError(
-                                    method, error.get('code'), error.get('message'))
+                                    method, error.get('code'), error.get('message'), retryable=True)
                             raise RPCError(f'{method}_FAILED')
                         self.status = 'ok'
                         return body['result']

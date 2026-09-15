@@ -55,6 +55,7 @@ async def test_deterministic_json_rpc_rejection_is_not_retried():
         await rpc.call('eth_call')
 
     assert raised.value.code == 3
+    assert raised.value.retryable is False
     assert len(session.starts) == 1
 
 
@@ -80,6 +81,7 @@ async def test_final_retryable_json_rpc_response_preserves_code_and_message():
 
     assert raised.value.code == -32000
     assert raised.value.message == 'max fee per gas less than block base fee'
+    assert raised.value.retryable is True
 
 
 async def test_generic_upstream_server_error_is_retried_but_revert_is_not():

@@ -84,6 +84,10 @@ class Settings:
         if not Decimal('1') <= self.max_fee_multiplier <= Decimal('10'):
             raise ValueError('TX_MAX_FEE_MULTIPLIER must be between 1 and 10')
         self.price_poll_seconds = float(order.get('price_poll_seconds', 1))
+        self.position_reconcile_seconds = float(
+            os.getenv('POSITION_RECONCILE_SECONDS', order.get('position_reconcile_seconds', 30)))
+        if self.position_reconcile_seconds <= 0:
+            raise ValueError('POSITION_RECONCILE_SECONDS must be positive')
         self.max_sell_attempts = int(order.get('max_sell_attempts', 3))
         self.max_open_positions = int(os.getenv(
             'MAX_OPEN_POSITIONS', order.get('max_open_positions', 3)))

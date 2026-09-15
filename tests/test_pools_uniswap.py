@@ -278,6 +278,34 @@ async def test_v3_buy_quote_uses_quoter_v2_exact_input(db):
     assert data.startswith('0x' + selector('quoteExactInput(bytes,uint256)').hex())
 
 
+async def test_v3_transient_quote_error_is_not_converted_to_zero_quote(db):
+    instance = adapter(db)
+    instance.rpc.eth_call = AsyncMock(side_effect=RPCError('eth_call_UNAVAILABLE'))
+
+    with pytest.raises(RPCError, match='eth_call_UNAVAILABLE'):
+        await instance.quote_buy(signal(), v3_pool(), Decimal('0.002'))
+
+
+async def test_v3_retryable_json_rpc_error_is_not_converted_to_zero_quote(db):
+    instance = adapter(db)
+    instance.rpc.eth_call = AsyncMock(side_effect=RPCResponseError(
+        'eth_call', -32000, 'upstream unavailable', retryable=True))
+
+    with pytest.raises(RPCResponseError) as raised:
+        await instance.quote_buy(signal(), v3_pool(), Decimal('0.002'))
+
+    assert raised.value.retryable is True
+
+
+async def test_v3_deterministic_revert_with_no_candidate_is_zero_quote(db):
+    instance = adapter(db)
+    instance.rpc.eth_call = AsyncMock(side_effect=RPCResponseError(
+        'eth_call', 3, 'execution reverted'))
+
+    with pytest.raises(ExecutionFailure, match='ZERO_QUOTE'):
+        await instance.quote_buy(signal(), v3_pool(), Decimal('0.002'))
+
+
 async def test_v3_native_buy_builds_deadlined_swaprouter02_multicall(db):
     instance = adapter(db)
     instance._base_transaction = AsyncMock(return_value={'nonce': 1})
@@ -446,6 +474,17 @@ async def test_v3_native_sell_proceeds_use_router_weth_withdrawal(db):
     assert await instance.parse_actual_sell_proceeds(receipt, position) == Decimal('0.001')
 
 
+async def test_token_balance_reads_raw_wallet_balance(db):
+    instance = adapter(db)
+    instance.rpc.eth_call = AsyncMock(return_value=encoded(['uint256'], [123]))
+
+    assert await instance.token_balance(TOKEN) == Decimal(123)
+    address, data = instance.rpc.eth_call.await_args.args
+    assert address == TOKEN
+    assert data.startswith('0x' + selector('balanceOf(address)').hex())
+    assert decode(['address'], bytes.fromhex(data[10:]))[0] == WALLET
+
+
 async def test_v4_buy_quote_uses_exact_input_single(db):
     instance = adapter(db)
     instance.rpc.call = AsyncMock(return_value='0x')
@@ -494,6 +533,16 @@ async def test_v4_multihop_quote_and_calldata_use_exact_input_path(db):
     assert route[3:] == (2 * 10**15, 120)
 
 
+async def test_v4_multihop_transient_quote_error_is_not_zero_quote(db):
+    pool = v4_pool()
+    pool['route_candidates'] = [{'keys': [pool['pool_key']]}]
+    instance = adapter(db)
+    instance.rpc.eth_call = AsyncMock(side_effect=RPCError('eth_call_UNAVAILABLE'))
+
+    with pytest.raises(RPCError, match='eth_call_UNAVAILABLE'):
+        await instance._quote_v4(42, pool, ZERO_ADDRESS)
+
+
 async def test_v4_buy_is_rejected_before_order_when_token_blocks_permit2(db):
     instance = adapter(db)
     instance.rpc.call = AsyncMock(
@@ -502,6 +551,18 @@ async def test_v4_buy_is_rejected_before_order_when_token_blocks_permit2(db):
 
     with pytest.raises(ExecutionFailure, match='V4_TOKEN_PERMIT2_UNSUPPORTED'):
         await instance.quote_buy(signal(), v4_pool(), Decimal('0.002'))
+
+
+async def test_v4_permit2_check_propagates_retryable_rpc_error(db):
+    instance = adapter(db)
+    instance.rpc.call = AsyncMock(side_effect=RPCResponseError(
+        'eth_call', -32000, 'upstream unavailable', retryable=True))
+    instance.rpc.eth_call = AsyncMock(return_value=encoded(['uint256', 'uint256'], [123, 456]))
+
+    with pytest.raises(RPCResponseError) as raised:
+        await instance.quote_buy(signal(), v4_pool(), Decimal('0.002'))
+
+    assert raised.value.retryable is True
 
 
 async def test_v4_native_buy_builds_universal_router_v211_plan(db):

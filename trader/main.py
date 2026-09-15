@@ -22,6 +22,7 @@ async def run_worker_after_nonce_ready(worker, nonce, db, retry_delay=1, max_ret
     while True:
         try:
             await nonce.reconcile()
+            await worker.reconcile_positions_once()
             with db.conn:
                 db.set_state('worker_startup_pending', False)
                 db.set_state('worker_last_error', None)
@@ -32,11 +33,11 @@ async def run_worker_after_nonce_ready(worker, nonce, db, retry_delay=1, max_ret
             with db.conn:
                 db.set_state('worker_startup_pending', True)
                 db.set_state('worker_last_error', {
-                    'type': type(exc).__name__, 'phase': 'nonce_reconcile',
+                    'type': type(exc).__name__, 'phase': 'startup_reconcile',
                     'at': int(time.time()),
                 })
             logging.getLogger(__name__).warning(
-                'nonce reconciliation retry type=%s delay=%s', type(exc).__name__, delay)
+                'startup reconciliation retry type=%s delay=%s', type(exc).__name__, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_retry_delay)
 

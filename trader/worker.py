@@ -18,6 +18,7 @@ class TradingWorker:
     def __init__(self, db, adapter, settings):
         self.db, self.adapter, self.settings = db, adapter, settings
         self._last_heartbeat = 0
+        self._last_position_reconcile = 0
 
     def _signal(self, row):
         payload = json.loads(row['payload'])
@@ -57,6 +58,61 @@ class TradingWorker:
             self.db.conn.execute(
                 "UPDATE signals SET status='POSITION_STUCK',last_error='ZERO_SELL_PROCEEDS' "
                 'WHERE event_id=?', (event_id,))
+
+    async def reconcile_positions_once(self, now=None):
+        now = int(now or time.time())
+        rows = self.db.conn.execute(
+            "SELECT p.*,s.status AS signal_status,s.last_error FROM positions p "
+            "JOIN signals s ON s.event_id=p.event_id "
+            "WHERE p.status IN ('OPEN','POSITION_STUCK') "
+            "AND s.status NOT IN ('SELL_PENDING','SELL_SUBMITTED') "
+            "AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.event_id=p.event_id "
+            "AND o.side='SELL' AND o.status IN ('SIGNED','SUBMITTED','UNKNOWN')) "
+            'ORDER BY p.updated_at,p.opened_at'
+        ).fetchall()
+        changed = 0
+        for row in rows:
+            position = dict(row)
+            balance = Decimal(str(await self.adapter.token_balance(position['token_address'])))
+            tracked = Decimal(position['token_quantity'])
+            request = dumps({'tracked_quantity': tracked, 'position_status': position['status']})
+            response = dumps({'onchain_balance': balance})
+            if balance == 0:
+                with self.db.conn:
+                    self.db.conn.execute(
+                        "UPDATE positions SET status='CLOSED',closed_at=?,updated_at=? WHERE event_id=?",
+                        (now, now, position['event_id']))
+                    self.db.conn.execute(
+                        "UPDATE signals SET status='CLOSED',last_error=NULL WHERE event_id=?",
+                        (position['event_id'],))
+                    attempt(self.db, position['event_id'], 'RECONCILE', 'CONFIRMED', now,
+                            commit=False, request_facts=request, response_facts=response,
+                            error_code='ONCHAIN_BALANCE_ZERO')
+                changed += 1
+            elif position['status'] == 'POSITION_STUCK' and position['last_error'] == 'ZERO_QUOTE':
+                with self.db.conn:
+                    self.db.conn.execute(
+                        "UPDATE positions SET status='OPEN',updated_at=? WHERE event_id=?",
+                        (now, position['event_id']))
+                    self.db.conn.execute(
+                        "UPDATE signals SET status='OPEN',last_error=NULL WHERE event_id=?",
+                        (position['event_id'],))
+                    attempt(self.db, position['event_id'], 'RECONCILE', 'REOPENED', now,
+                            commit=False, request_facts=request, response_facts=response)
+                changed += 1
+            elif 0 < balance < tracked and position['last_error'] != 'MANUAL_BALANCE_MISMATCH':
+                with self.db.conn:
+                    self.db.conn.execute(
+                        "UPDATE positions SET status='POSITION_STUCK',updated_at=? WHERE event_id=?",
+                        (now, position['event_id']))
+                    self.db.conn.execute(
+                        "UPDATE signals SET status='POSITION_STUCK',last_error=? WHERE event_id=?",
+                        ('MANUAL_BALANCE_MISMATCH', position['event_id']))
+                    attempt(self.db, position['event_id'], 'RECONCILE', 'STUCK', now,
+                            commit=False, request_facts=request, response_facts=response,
+                            error_code='MANUAL_BALANCE_MISMATCH')
+                changed += 1
+        return changed
 
     async def buy_once(self, now=None):
         now = int(now or time.time())
@@ -283,7 +339,7 @@ class TradingWorker:
                     "UPDATE signals SET status='SELL_SUBMITTED',last_error=? WHERE event_id=?",
                     (exc.code, position['event_id']))
         except ExecutionFailure as exc:
-            if exc.code == 'APPROVAL_PENDING':
+            if exc.code in ('APPROVAL_PENDING', 'ZERO_QUOTE'):
                 with self.db.conn:
                     self.db.conn.execute(
                         "UPDATE signals SET status='OPEN',last_error=? WHERE event_id=?",
@@ -291,6 +347,9 @@ class TradingWorker:
                     self.db.conn.execute(
                         'UPDATE positions SET updated_at=? WHERE event_id=?',
                         (now, position['event_id']))
+                    if exc.code == 'ZERO_QUOTE':
+                        attempt(self.db, position['event_id'], 'SELL', 'RETRYABLE', now,
+                                commit=False, error_code=exc.code)
                 return True
             attempt(self.db, position['event_id'], 'SELL', 'FAILED', now, error_code=exc.code)
             failures = self.db.conn.execute(
@@ -344,6 +403,9 @@ class TradingWorker:
                     self.db.set_state('worker_heartbeat_at', now)
                 self._last_heartbeat = now
             try:
+                if now - self._last_position_reconcile >= self.settings.position_reconcile_seconds:
+                    self._last_position_reconcile = now
+                    await self.reconcile_positions_once(now)
                 found = await self.buy_once() or await self.sell_once()
             except Exception as exc:
                 found = False

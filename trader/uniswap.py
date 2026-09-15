@@ -125,7 +125,9 @@ class UniswapRobinhoodExecutionAdapter:
                         ),
                     )
                     amount_out, _ = decode(['uint256', 'uint256'], bytes.fromhex(data[2:]))
-                except Exception:
+                except RPCResponseError as exc:
+                    if exc.retryable:
+                        raise
                     return None
                 return (int(amount_out), keys) if amount_out > 0 else None
 
@@ -176,7 +178,9 @@ class UniswapRobinhoodExecutionAdapter:
                 )
                 amount_out, _, _, _ = decode(
                     ['uint256', 'uint160[]', 'uint32[]', 'uint256'], bytes.fromhex(data[2:]))
-            except Exception:
+            except RPCResponseError as exc:
+                if exc.retryable:
+                    raise
                 return None
             return (int(amount_out), candidate) if amount_out > 0 else None
 
@@ -212,7 +216,9 @@ class UniswapRobinhoodExecutionAdapter:
         }
         try:
             await self.rpc.call('eth_call', [request, 'latest'])
-        except RPCResponseError:
+        except RPCResponseError as exc:
+            if exc.retryable:
+                raise
             raise ExecutionFailure('V4_TOKEN_PERMIT2_UNSUPPORTED') from None
 
     @staticmethod
@@ -393,6 +399,13 @@ class UniswapRobinhoodExecutionAdapter:
             output = await self._quote_v2(amount, pool['path_sell'])
         decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
         return Decimal(output) / (Decimal(10) ** decimals)
+
+    async def token_balance(self, token):
+        result = await self.rpc.eth_call(
+            token,
+            calldata('balanceOf(address)', ['address'], [self.settings.wallet_address]),
+        )
+        return Decimal(decode(['uint256'], bytes.fromhex(result[2:]))[0])
 
     async def _allowance(self, token, spender):
         result = await self.rpc.eth_call(token, calldata('allowance(address,address)', ['address', 'address'],

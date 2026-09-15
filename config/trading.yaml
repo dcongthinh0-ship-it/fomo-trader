@@ -5,6 +5,7 @@ order:
   take_profit_pct: "40"
   sell_percentage: "100"
   price_poll_seconds: 1
+  position_reconcile_seconds: 30
   buy_max_slippage_bps: 500
   sell_max_slippage_bps: 500
   tx_deadline_seconds: 60

@@ -26,6 +26,7 @@ class ExecutionAdapter(Protocol):
     async def reconcile_nonce(self): ...
     def parse_actual_token_received(self, receipt, token, wallet): ...
     async def quote_full_sell(self, position): ...
+    async def token_balance(self, token): ...
     async def ensure_token_approval(self, position): ...
     async def build_sell_transaction(self, position, minimum): ...
     async def submit_sell(self, transaction): ...
@@ -40,6 +41,7 @@ class FakeExecutionAdapter:
     sell_received: Decimal = Decimal('14')
     fail_buy: str | None = None
     fail_sell: str | None = None
+    wallet_token_balance: Decimal | None = None
 
     async def resolve_pool(self, signal):
         return {'version': 'v2', 'address': signal.payload['market_snapshot']['pool_address']}
@@ -77,6 +79,9 @@ class FakeExecutionAdapter:
         if self.fail_sell == 'quote':
             raise ExecutionFailure('SELL_QUOTE_FAILED')
         return self.sell_quote
+
+    async def token_balance(self, token):
+        return self.buy_received if self.wallet_token_balance is None else self.wallet_token_balance
 
     async def ensure_token_approval(self, position):
         if self.fail_sell == 'approval':

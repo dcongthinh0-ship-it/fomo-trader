@@ -50,11 +50,13 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 20. public 模式的只读查询走官方公共 RPC，`eth_sendRawTransaction` 单独走官方 Sequencer；Alchemy 模式读写均走所选 Alchemy URL。所有本地交易哈希统一保存为 `0x` 加 64 位十六进制，receipt/transaction 查询也会兼容修复历史无前缀值。BUY 广播结果未知时只查询原哈希；信号过期且 receipt 与 transaction 都不存在才终止为 `EXPIRED/BROADCAST_NOT_FOUND` 并对账 nonce，绝不重新买入旧信号。
 21. 主网交易统一签为 EIP-1559 type 2；`maxFeePerGas` 默认取临近广播时 `eth_gasPrice × 2`，`maxPriorityFeePerGas=0`，使费用上限覆盖 Nitro 单区块最多约 2 倍的 base fee 上涨，同时实际支付仍由当块 base fee 决定。倍率只能配置在 1～10；最终 JSON-RPC 错误响应必须保留原始 code/message，不能降级成无原因的 `UNAVAILABLE`。广播异常事实写入 execution attempt 前会替换长十六进制载荷并截断，避免保存或暴露原始签名交易。
 22. 启动时公共 RPC 暂不可用不能让服务退出重启：HTTP 信号入口先上线并以 `worker_startup_pending=true`、`service=degraded` 暴露状态，后台指数退避重试 pending nonce 对账；只有对账成功后才启动交易 worker。等待期间收到的信号照常持久化，恢复后仍先检查过期时间，禁止补买旧信号。
+23. Quoter 多候选只允许把明确、不可重试的合约回滚视为该候选不可报价；HTTP 403、限流、上游失败和其他瞬时 RPC 错误必须向 worker 传播并保留 `OPEN`，不得转换成 `ZERO_QUOTE` 或消耗永久卖出失败次数。真实 `ZERO_QUOTE` 也只记录 `SELL/RETRYABLE` 并继续持仓，不得把仓位永久锁死。
+24. worker 启动时及每 30 秒用 ERC-20 `balanceOf` 对账非关闭仓位：链上余额为零时将用户手动清仓或外部清仓安全归档为 `CLOSED`；旧版错误形成的 `POSITION_STUCK/ZERO_QUOTE` 在余额仍存在时恢复为 `OPEN`；余额大于零但小于本地数量时以 `MANUAL_BALANCE_MISMATCH` 保持卡死，禁止按错误成本和数量自动卖出。存在待确认 SELL 时不得用余额对账越过 tx-hash 恢复流程。
 
 ## 数据状态
 
 - 信号：`RECEIVED → BUY_PENDING → BUY_SUBMITTED → OPEN → SELL_PENDING → SELL_SUBMITTED → CLOSED`。
-- 失败：买入终止为 `BUY_FAILED`；卖出有限重试后为 `POSITION_STUCK`，此前仓位保持 `OPEN`。
+- 失败：买入终止为 `BUY_FAILED`；确定性卖出构建/授权失败有限重试后为 `POSITION_STUCK`，瞬时 RPC 与 `ZERO_QUOTE` 保持 `OPEN`；链上卖出已成功但 proceeds 不可解析仍为 `POSITION_STUCK`，防止重复卖出。
 - 放弃：信号到达时持仓已满则终止为 `SKIPPED`，原因是 `MAX_OPEN_POSITIONS`，永不回队。
 - 订单：`CREATED / SIGNED / SUBMITTED / CONFIRMED / REVERTED / FAILED / UNKNOWN`。
 
