@@ -18,6 +18,7 @@
 - `0.0004 ETH` 单笔配置与最多 3 个活跃仓位限制；第 4 个信号当场永久跳过，关闭一仓后也不回买旧信号，只允许新信号买入；`POSITION_STUCK` 也占用名额。
 - Gas 模拟请求将 `value/chainId/gasPrice` 编码为 JSON-RPC 十六进制 quantity，而签名交易继续使用整数并将 `to` 转为 EIP-55 checksum；防止官方 Go 节点返回 `-32602` 以及 `eth-account` 因全小写 Router 地址拒绝签名。
 - V4 买入前并行模拟代币对 Permit2 的授权；明确回滚的代币以 `V4_TOKEN_PERMIT2_UNSUPPORTED` 在创建订单前拒绝，避免买入后无法使用 Universal Router 卖出，普通 RPC 临时失败仍保留重试语义。
+- Uniswap 执行器启动时从链上 pending nonce 对账；本地签名异常也会立即对账，防止签名前失败把本地 nonce 永久抬高并造成后续交易卡在 nonce 空洞。
 
 ## 只读主网核验
 

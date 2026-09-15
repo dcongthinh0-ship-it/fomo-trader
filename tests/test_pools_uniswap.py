@@ -343,6 +343,19 @@ async def test_base_transaction_is_accepted_by_eth_account_signer(db):
     assert signed.hash
 
 
+async def test_signing_failure_reconciles_reserved_nonce_before_retry(db):
+    instance = adapter(db)
+    instance.settings.private_key = lambda: 'not-a-private-key'
+    instance.nonce.reconcile = AsyncMock(return_value=0)
+
+    with pytest.raises(ValueError):
+        await instance.submit_buy({'to': to_checksum_address(POOL), 'data': '0x1234',
+                                   'value': 0, 'chainId': 4663, 'gasPrice': 1,
+                                   'gas': 21000, 'nonce': 3})
+
+    instance.nonce.reconcile.assert_awaited_once_with()
+
+
 async def test_v3_native_sell_approves_swaps_and_unwraps_weth(db):
     instance = adapter(db)
     pool = v3_pool()

@@ -307,7 +307,11 @@ class UniswapRobinhoodExecutionAdapter:
     async def _submit(self, transaction):
         transaction = dict(transaction)
         event_id, side = transaction.pop('_event_id', None), transaction.pop('_side', None)
-        signed = Account.sign_transaction(transaction, self.settings.private_key())
+        try:
+            signed = Account.sign_transaction(transaction, self.settings.private_key())
+        except Exception:
+            await self.nonce.reconcile()
+            raise
         tx_hash, nonce = signed.hash.hex(), transaction['nonce']
         if event_id and side in ('BUY', 'SELL'):
             from .orders import update_order

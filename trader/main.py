@@ -32,8 +32,10 @@ async def serve():
         elif settings.adapter == 'uniswap':
             if rpc is None:
                 raise ValueError('uniswap adapter requires a configured trading RPC endpoint')
+            nonce = NonceManager(db, rpc, settings.wallet_address)
+            await nonce.reconcile()
             adapter = UniswapRobinhoodExecutionAdapter(
-                db, rpc, NonceManager(db, rpc, settings.wallet_address), settings)
+                db, rpc, nonce, settings)
         else:
             raise ValueError('unknown execution adapter')
         worker = TradingWorker(db, adapter, settings)
