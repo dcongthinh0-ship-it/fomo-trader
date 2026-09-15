@@ -16,6 +16,7 @@
 - 精确金额换算、非零最小输出、receipt Transfer 解析。
 - 默认 live=false，以及随机测试密钥的地址匹配/不匹配启动校验；测试密钥不进入 Git。
 - `0.0004 ETH` 单笔配置与最多 3 个活跃仓位限制；第 4 个信号当场永久跳过，关闭一仓后也不回买旧信号，只允许新信号买入；`POSITION_STUCK` 也占用名额。
+- Gas 模拟请求将 `value/chainId/gasPrice` 编码为 JSON-RPC 十六进制 quantity，而签名交易继续使用整数；防止官方 Go 节点返回 `-32602`。
 
 ## 只读主网核验
 

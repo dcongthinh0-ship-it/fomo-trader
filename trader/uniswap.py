@@ -208,7 +208,10 @@ class UniswapRobinhoodExecutionAdapter:
     async def _base_transaction(self, to, data, value=0):
         tx = {'to': to, 'data': data, 'value': value,
               'chainId': 4663, 'gasPrice': int(await self.rpc.call('eth_gasPrice'), 16)}
-        estimate = await self.rpc.call('eth_estimateGas', [{**tx, 'from': self.settings.wallet_address}])
+        estimate_request = {**tx, 'from': self.settings.wallet_address}
+        for field in ('value', 'chainId', 'gasPrice'):
+            estimate_request[field] = hex(estimate_request[field])
+        estimate = await self.rpc.call('eth_estimateGas', [estimate_request])
         tx['gas'] = int(int(estimate, 16) * 1.2)
         tx['nonce'] = await self.nonce.reserve()
         return tx

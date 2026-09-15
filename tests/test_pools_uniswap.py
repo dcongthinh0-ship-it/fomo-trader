@@ -301,6 +301,34 @@ async def test_nonce_is_not_reserved_when_gas_estimation_fails(db):
     instance.nonce.reserve.assert_not_awaited()
 
 
+async def test_gas_estimate_uses_hex_rpc_quantities_but_signing_transaction_keeps_integers(db):
+    instance = adapter(db)
+    instance.rpc.call = AsyncMock(side_effect=['0x64', '0x5208'])
+    instance.nonce.reserve = AsyncMock(return_value=7)
+
+    transaction = await instance._base_transaction(POOL, '0x1234', value=42)
+
+    estimate_call = instance.rpc.call.await_args_list[1]
+    assert estimate_call.args[0] == 'eth_estimateGas'
+    assert estimate_call.args[1][0] == {
+        'to': POOL,
+        'data': '0x1234',
+        'value': '0x2a',
+        'chainId': '0x1237',
+        'gasPrice': '0x64',
+        'from': WALLET,
+    }
+    assert transaction == {
+        'to': POOL,
+        'data': '0x1234',
+        'value': 42,
+        'chainId': 4663,
+        'gasPrice': 100,
+        'gas': 25200,
+        'nonce': 7,
+    }
+
+
 async def test_v3_native_sell_approves_swaps_and_unwraps_weth(db):
     instance = adapter(db)
     pool = v3_pool()
