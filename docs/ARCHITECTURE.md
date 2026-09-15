@@ -24,13 +24,13 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 - `execution.py`、`worker.py`：适配器协议和可恢复买卖状态机。
 - `rpc.py`、`nonce.py`：隔离 RPC、并发安全的请求起始速率限制、仅瞬时故障有限重试、确定性 JSON-RPC 拒绝快速失败、nonce 协调与恢复。
 - `pools.py`、`uniswap.py`：官方部署核验、池识别、V2/V3 直接与同协议单桥、V3 QuoterV2 + SwapRouter02，以及 V4 PoolKey 恢复、StateView/Multicall3 活跃流动性筛选、V4Quoter 多池报价、Universal Router 多池买卖、Permit2、签名与 receipt 解析。
-- `orders.py`、`positions.py`：唯一订单和 40% 全仓止盈领域写入。
+- `orders.py`、`positions.py`：唯一订单、40% 全仓止盈与 90% 闪崩全仓逃生领域写入。
 
 ## 不可破坏约束
 
 1. `LIVE_TRADING_ENABLED=false` 是默认值；未授权不得广播。
 2. 同一 event 最多一个 BUY 与一个 SELL；签名前即保存唯一订单，签名后、广播前先持久化 tx hash/nonce；超时或重启只按 receipt 恢复，并可重新核验池上下文解析卖出结果，不能重买。
-3. 目标固定为 `actual_cost × 1.40`，gas 不计入成本；只卖 100%，不含止损或其他策略。
+3. 退出策略只有两条：完整卖出报价达到 `actual_cost × 1.40` 时全卖；或相对 `actual_cost`/上一笔有效完整卖出报价下跌至少 90% 时单次有效报价立即全卖。gas 不计入成本，不含普通止损或其他策略。
 4. 市值与流动性只来自信号且不在本服务重查；链上池/路由核验不是新入场条件。
 5. V4 pool id 是 32 字节标识，绝不能当合约地址调用；PoolKey 必须来自 PoolManager 的对应 `Initialize` 日志或信号字段，并重新计算 pool id 核对。
 6. 私钥和共享密钥只从只读文件读取，且被 Git/Docker build context 排除；Compose 未配置私钥时挂载 `/dev/null`，live 启动必然失败；健康接口与日志不泄露任何密钥或完整 RPC URL。
@@ -52,6 +52,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 22. 启动时公共 RPC 暂不可用不能让服务退出重启：HTTP 信号入口先上线并以 `worker_startup_pending=true`、`service=degraded` 暴露状态，后台指数退避重试 pending nonce 对账；只有对账成功后才启动交易 worker。等待期间收到的信号照常持久化，恢复后仍先检查过期时间，禁止补买旧信号。
 23. Quoter 多候选只允许把明确、不可重试的合约回滚视为该候选不可报价；HTTP 403、限流、上游失败和其他瞬时 RPC 错误必须向 worker 传播并保留 `OPEN`，不得转换成 `ZERO_QUOTE` 或消耗永久卖出失败次数。真实 `ZERO_QUOTE` 也只记录 `SELL/RETRYABLE` 并继续持仓，不得把仓位永久锁死。
 24. worker 启动时及每 30 秒用 ERC-20 `balanceOf` 对账非关闭仓位：链上余额为零时将用户手动清仓或外部清仓安全归档为 `CLOSED`；旧版错误形成的 `POSITION_STUCK/ZERO_QUOTE` 在余额仍存在时恢复为 `OPEN`；余额大于零但小于本地数量时以 `MANUAL_BALANCE_MISMATCH` 保持卡死，禁止按错误成本和数量自动卖出。存在待确认 SELL 时不得用余额对账越过 tx-hash 恢复流程。
+25. 闪崩检测只使用实时链上 Quoter 的“当前全仓可换回金额”，不用飞书市值或第三方延迟价格。跌幅达到 90% 时写入持久化 emergency latch，立即走全仓 SELL；即使下一次报价短暂反弹，直到 receipt 成功前仍继续逃生。普通止盈滑点为 5%，闪崩逃生独立允许 50% 滑点并在失败后重取报价，所有 `amountOutMinimum` 向下取整到整数 base unit 且至少为 1，避免小数 wei 使交易在构建阶段失败。
 
 ## 数据状态
 

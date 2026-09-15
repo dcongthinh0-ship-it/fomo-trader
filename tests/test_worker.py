@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from decimal import Decimal
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from trader.worker import TradingWorker
 def worker_settings(live=True, max_sell_attempts=3, amount='10', max_open_positions=3):
     return SimpleNamespace(live=live, amount=Decimal(amount), amount_mode='USD',
                            buy_slippage_bps=500, sell_slippage_bps=500,
+                           crash_sell_drop_pct=Decimal('90'), crash_sell_slippage_bps=5000,
                            wallet_address='0x' + '1' * 40, max_sell_attempts=max_sell_attempts,
                            max_open_positions=max_open_positions, price_poll_seconds=1,
                            position_reconcile_seconds=30)
@@ -113,6 +115,70 @@ async def test_sell_does_not_trigger_below_exact_target(db, valid_payload):
     assert not await worker.sell_once(now=102)
     assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'OPEN'
     assert db.conn.execute("SELECT count(*) FROM orders WHERE side='SELL'").fetchone()[0] == 0
+
+
+async def test_strategy_has_no_ordinary_stop_loss(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('2'))
+    worker = TradingWorker(db, adapter, worker_settings())
+    await worker.buy_once(now=101)
+
+    assert not await worker.sell_once(now=102)
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'OPEN'
+    assert db.conn.execute("SELECT count(*) FROM orders WHERE side='SELL'").fetchone()[0] == 0
+
+
+async def test_ninety_percent_loss_from_entry_triggers_immediate_full_sell(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('1'), sell_received=Decimal('0.9'))
+    worker = TradingWorker(db, adapter, worker_settings())
+    await worker.buy_once(now=101)
+
+    assert await worker.sell_once(now=102)
+    sell = db.conn.execute("SELECT * FROM orders WHERE side='SELL'").fetchone()
+    trigger = db.conn.execute(
+        "SELECT request_facts FROM execution_attempts WHERE side='SELL' AND status='TRIGGERED'"
+    ).fetchone()
+    facts = json.loads(trigger['request_facts'])
+    assert sell['input_amount'] == '100'
+    assert sell['expected_output'] == '1' and sell['minimum_output'] == '0.5'
+    assert facts['reason'] == 'CRASH_FROM_ENTRY_90_PCT'
+    assert facts['slippage_bps'] == 5000
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'CLOSED'
+
+
+async def test_ninety_percent_interval_crash_triggers_even_above_entry_crash_floor(
+        db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('1.3'), sell_received=Decimal('1.2'))
+    worker = TradingWorker(db, adapter, worker_settings())
+    await worker.buy_once(now=101)
+    db.set_state(worker._quote_state_key(valid_payload['event_id']), {'quote': '13', 'at': 101})
+
+    assert await worker.sell_once(now=102)
+    trigger = db.conn.execute(
+        "SELECT request_facts FROM execution_attempts WHERE side='SELL' AND status='TRIGGERED'"
+    ).fetchone()
+    assert json.loads(trigger['request_facts'])['reason'] == (
+        'CRASH_FROM_PREVIOUS_QUOTE_90_PCT')
+
+
+async def test_emergency_exit_remains_latched_until_sell_confirms(db, valid_payload):
+    accept(db, valid_payload)
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('1'), sell_received=Decimal('1.8'))
+    adapter.build_sell_transaction = AsyncMock(side_effect=[
+        ExecutionFailure('SELL_BUILD_FAILED'),
+        {'nonce': 2, 'minimum_output': '1'},
+    ])
+    worker = TradingWorker(db, adapter, worker_settings())
+    await worker.buy_once(now=101)
+
+    assert await worker.sell_once(now=102)
+    adapter.sell_quote = Decimal('2')
+    assert await worker.sell_once(now=103)
+    assert adapter.build_sell_transaction.await_count == 2
+    assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'CLOSED'
+    assert db.state(worker._emergency_state_key(valid_payload['event_id'])) is None
 
 
 async def test_buy_failure_is_terminal_and_not_retried(db, valid_payload):

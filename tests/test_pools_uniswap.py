@@ -17,6 +17,7 @@ from trader.uniswap import (
     WETH_WITHDRAWAL_TOPIC,
     UniswapRobinhoodExecutionAdapter,
     address_topic,
+    minimum_raw_amount,
     raw_amount,
     rpc_error_facts,
 )
@@ -232,6 +233,11 @@ def test_raw_amount_never_rounds_or_allows_zero():
         raw_amount('0.0000001', 6)
     with pytest.raises(ExecutionFailure, match='INVALID_ASSET_AMOUNT'):
         raw_amount('0', 18)
+
+
+def test_minimum_output_is_safely_floored_to_integer_base_units():
+    assert minimum_raw_amount(Decimal('0.0000000000000000019'), 18) == 1
+    assert minimum_raw_amount(Decimal('0.0000000000000000005'), 18) == 1
 
 
 def adapter(db, mode='ETH'):

@@ -73,11 +73,17 @@ class Settings:
         self.amount_mode = os.getenv('BUY_AMOUNT_MODE', order['amount_mode']).upper()
         self.amount = decimal(os.getenv('BUY_AMOUNT', order['amount']), 'BUY_AMOUNT')
         self.take_profit_pct = decimal(order.get('take_profit_pct', '40'), 'take_profit_pct')
+        self.crash_sell_drop_pct = decimal(
+            order.get('crash_sell_drop_pct', '90'), 'crash_sell_drop_pct')
         self.sell_percentage = decimal(order.get('sell_percentage', '100'), 'sell_percentage')
-        if self.take_profit_pct != Decimal('40') or self.sell_percentage != Decimal('100'):
-            raise ValueError('strategy is fixed at 40% take profit and 100% sell')
+        if (self.take_profit_pct != Decimal('40')
+                or self.crash_sell_drop_pct != Decimal('90')
+                or self.sell_percentage != Decimal('100')):
+            raise ValueError('strategy is fixed at 40% take profit, 90% crash exit and 100% sell')
         self.buy_slippage_bps = int(os.getenv('BUY_MAX_SLIPPAGE_BPS', order['buy_max_slippage_bps']))
         self.sell_slippage_bps = int(os.getenv('SELL_MAX_SLIPPAGE_BPS', order['sell_max_slippage_bps']))
+        self.crash_sell_slippage_bps = int(os.getenv(
+            'CRASH_SELL_SLIPPAGE_BPS', order.get('crash_sell_slippage_bps', 5000)))
         self.deadline_seconds = int(os.getenv('TX_DEADLINE_SECONDS', order['tx_deadline_seconds']))
         self.max_fee_multiplier = decimal(
             os.getenv('TX_MAX_FEE_MULTIPLIER', '2'), 'TX_MAX_FEE_MULTIPLIER')
@@ -93,7 +99,8 @@ class Settings:
             'MAX_OPEN_POSITIONS', order.get('max_open_positions', 3)))
         if self.max_open_positions <= 0:
             raise ValueError('MAX_OPEN_POSITIONS must be positive')
-        for value in (self.buy_slippage_bps, self.sell_slippage_bps):
+        for value in (self.buy_slippage_bps, self.sell_slippage_bps,
+                      self.crash_sell_slippage_bps):
             if not 0 <= value < 10000:
                 raise ValueError('slippage bps must be in [0,10000)')
         default_asset = self.config.get('contracts', {}).get('usdg', '') if self.amount_mode == 'USD' else ''

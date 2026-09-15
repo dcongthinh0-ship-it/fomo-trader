@@ -38,6 +38,13 @@ def raw_amount(amount, decimals):
     return int(value)
 
 
+def minimum_raw_amount(amount, decimals):
+    value = Decimal(str(amount)) * (Decimal(10) ** int(decimals))
+    if not value.is_finite() or value <= 0:
+        raise ExecutionFailure('INVALID_MINIMUM_OUTPUT')
+    return max(1, int(value))
+
+
 def rpc_error_facts(exc):
     facts = {'type': type(exc).__name__}
     if isinstance(exc, RPCResponseError):
@@ -507,8 +514,9 @@ class UniswapRobinhoodExecutionAdapter:
     async def build_sell_transaction(self, position, minimum):
         pool = await self._pool_for_position(position)
         amount = int(Decimal(position['token_quantity']))
-        min_raw = raw_amount(minimum, 18 if self.settings.amount_mode == 'ETH'
-                             else self.settings.buy_asset_decimals)
+        min_raw = minimum_raw_amount(
+            minimum, 18 if self.settings.amount_mode == 'ETH'
+            else self.settings.buy_asset_decimals)
         deadline = int(time.time()) + self.settings.deadline_seconds
         if pool['version'] == 'v4':
             data = self._v4_swap_calldata(pool, position['token_address'], self.v4_input_asset,

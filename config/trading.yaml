@@ -3,11 +3,13 @@ order:
   amount_mode: ETH
   amount: "0.0004"
   take_profit_pct: "40"
+  crash_sell_drop_pct: "90"
   sell_percentage: "100"
   price_poll_seconds: 1
   position_reconcile_seconds: 30
   buy_max_slippage_bps: 500
   sell_max_slippage_bps: 500
+  crash_sell_slippage_bps: 5000
   tx_deadline_seconds: 60
   max_sell_attempts: 3
   max_open_positions: 3

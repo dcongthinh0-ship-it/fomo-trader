@@ -25,6 +25,18 @@ class TradingWorker:
         return TradeSignal(row['signal_id'], row['event_id'], 4663, payload['token_address'],
                            row['expires_at'], payload)
 
+    @staticmethod
+    def _quote_state_key(event_id):
+        return f'position_quote:{event_id}'
+
+    @staticmethod
+    def _emergency_state_key(event_id):
+        return f'emergency_exit:{event_id}'
+
+    def _clear_exit_tracking(self, event_id):
+        self.db.set_state(self._quote_state_key(event_id), None)
+        self.db.set_state(self._emergency_state_key(event_id), None)
+
     def _finalize_buy(self, signal, quantity, tx_hash, nonce, receipt, now):
         with self.db.conn:
             update_order(self.db, signal.event_id, 'BUY', 'CONFIRMED', now, commit=False,
@@ -47,6 +59,7 @@ class TradingWorker:
             close_position(self.db, event_id, tx_hash, now, commit=False)
             self.db.conn.execute(
                 "UPDATE signals SET status='CLOSED',last_error=NULL WHERE event_id=?", (event_id,))
+            self._clear_exit_tracking(event_id)
 
     def _mark_sell_output_unknown(self, event_id, tx_hash, now):
         with self.db.conn:
@@ -88,6 +101,7 @@ class TradingWorker:
                     attempt(self.db, position['event_id'], 'RECONCILE', 'CONFIRMED', now,
                             commit=False, request_facts=request, response_facts=response,
                             error_code='ONCHAIN_BALANCE_ZERO')
+                    self._clear_exit_tracking(position['event_id'])
                 changed += 1
             elif position['status'] == 'POSITION_STUCK' and position['last_error'] == 'ZERO_QUOTE':
                 with self.db.conn:
@@ -297,20 +311,58 @@ class TradingWorker:
         position = dict(position)
         try:
             quote = Decimal(str(await self.adapter.quote_full_sell(position)))
-            if quote < Decimal(position['target_proceeds']):
+            cost = Decimal(position['actual_cost'])
+            target = Decimal(position['target_proceeds'])
+            previous_state = self.db.state(self._quote_state_key(position['event_id'])) or {}
+            previous_quote = Decimal(previous_state['quote']) if previous_state.get('quote') else None
+            emergency = self.db.state(self._emergency_state_key(position['event_id'])) or {}
+            remaining = (
+                Decimal(100) - self.settings.crash_sell_drop_pct) / Decimal(100)
+            crash_from_entry = quote <= cost * remaining
+            crash_from_previous = previous_quote is not None and quote <= previous_quote * remaining
+            crash_reason = emergency.get('reason')
+            if not crash_reason and crash_from_entry:
+                crash_reason = 'CRASH_FROM_ENTRY_90_PCT'
+            if not crash_reason and crash_from_previous:
+                crash_reason = 'CRASH_FROM_PREVIOUS_QUOTE_90_PCT'
+            with self.db.conn:
+                self.db.set_state(self._quote_state_key(position['event_id']), {
+                    'quote': str(quote), 'at': now,
+                })
+                if crash_reason and not emergency:
+                    self.db.set_state(self._emergency_state_key(position['event_id']), {
+                        'reason': crash_reason, 'trigger_quote': str(quote), 'at': now,
+                    })
+                if not crash_reason and quote < target:
+                    self.db.conn.execute(
+                        "UPDATE signals SET last_error=NULL WHERE event_id=?",
+                        (position['event_id'],))
+            if not crash_reason and quote < target:
                 with self.db.conn:
                     self.db.conn.execute(
                         'UPDATE positions SET updated_at=? WHERE event_id=?',
                         (now, position['event_id']))
                 return False
-            minimum = quote * (Decimal(10000 - self.settings.sell_slippage_bps) / Decimal(10000))
+            slippage_bps = (self.settings.crash_sell_slippage_bps
+                            if crash_reason else self.settings.sell_slippage_bps)
+            trigger_reason = crash_reason or 'TAKE_PROFIT_40_PCT'
+            minimum = quote * (Decimal(10000 - slippage_bps) / Decimal(10000))
             order = create_order(self.db, position['event_id'], 'SELL', position['token_address'],
                                  position['token_quantity'], quote, minimum, now)
-            if order['status'] in ('SUBMITTED', 'UNKNOWN'):
+            if order['status'] in ('SIGNED', 'SUBMITTED', 'UNKNOWN'):
                 return await self.recover_submitted(position['event_id'], 'SELL')
+            update_order(self.db, position['event_id'], 'SELL', 'CREATED', now,
+                         expected_output=str(quote), minimum_output=str(minimum), error_code=None)
+            attempt(self.db, position['event_id'], 'SELL', 'TRIGGERED', now,
+                    request_facts=dumps({
+                        'reason': trigger_reason, 'quote': quote, 'previous_quote': previous_quote,
+                        'actual_cost': cost, 'target_proceeds': target,
+                        'slippage_bps': slippage_bps,
+                    }))
             with self.db.conn:
-                self.db.conn.execute("UPDATE signals SET status='SELL_PENDING' WHERE event_id=?",
-                                     (position['event_id'],))
+                self.db.conn.execute(
+                    "UPDATE signals SET status='SELL_PENDING',last_error=NULL WHERE event_id=?",
+                    (position['event_id'],))
             await self.adapter.ensure_token_approval(position)
             transaction = await self.adapter.build_sell_transaction(position, minimum)
             result = await self.adapter.submit_sell(transaction)

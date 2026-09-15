@@ -33,6 +33,8 @@ def test_default_is_live_disabled_and_uses_small_eth_order(monkeypatch):
     assert settings.buy_asset_symbol == 'ETH'
     assert settings.max_open_positions == 3
     assert settings.take_profit_pct == 40
+    assert settings.crash_sell_drop_pct == 90
+    assert settings.crash_sell_slippage_bps == 5000
     assert settings.max_fee_multiplier == 2
     assert settings.position_reconcile_seconds == 30
 
