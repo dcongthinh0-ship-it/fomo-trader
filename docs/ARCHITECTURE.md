@@ -44,7 +44,8 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 14. worker 每 5 秒写入一次心跳并保存最近异常类型/时间；心跳超过 15 秒或存在 `POSITION_STUCK` 时 `/health` 返回 `service=degraded`，但不暴露钱包、RPC URL 或密钥。
 15. V4 只读 Router 模拟必须显式提供非零公开 `from` 地址；`TAKE_ALL` 把 `msgSender()` 作为收款人，省略 `from` 会让严格 ERC-20 以 `ERC20InvalidReceiver(0x0)` 回滚，这不是实际签名交易的路由失败。
 16. 当前买入金额为 `0.0004 ETH`（配置时约 1 美元）；最多同时存在 3 个非 `CLOSED` 仓位，`POSITION_STUCK` 继续占用名额。达到上限时新信号立即终止为 `SKIPPED/MAX_OPEN_POSITIONS`，不排队且以后不得回买；worker 同一轮仍继续检查卖出，释放名额后只允许新到达的有效信号买入。
-17. `eth_estimateGas` 的 `value/chainId/gasPrice` 必须按 JSON-RPC quantity 编码为 `0x...` 字符串；本地签名交易仍保存整数，避免 Robinhood Go 节点以 `-32602` 在签名前拒绝 V2/V3/V4 共用的构建路径。
+17. `eth_estimateGas` 的 `value/chainId/gasPrice` 必须按 JSON-RPC quantity 编码为 `0x...` 字符串；本地签名交易仍保存整数，且 `to` 统一转换为 EIP-55 checksum 地址，避免 Robinhood Go 节点以 `-32602` 拒绝模拟或 `eth-account` 以 `TypeError` 拒绝签名 V2/V3/V4 共用的构建路径。
+18. V4 买入报价与代币对 Permit2 的只读授权模拟并行执行；若代币明确拒绝 Permit2，则以 `V4_TOKEN_PERMIT2_UNSUPPORTED` 在创建订单前失败关闭，避免买入后无法通过官方 Universal Router 卖出。RPC 暂时不可用仍按瞬时错误重试，不误判为代币不兼容。
 
 ## 数据状态
 

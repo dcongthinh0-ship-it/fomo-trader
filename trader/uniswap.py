@@ -5,14 +5,14 @@ from decimal import Decimal
 
 from eth_abi import decode, encode
 from eth_account import Account
-from eth_utils import keccak
+from eth_utils import keccak, to_checksum_address
 
 from .db import dumps
 from .execution import ExecutionFailure, SubmissionUnknown
 from .models import TradeSignal
 from .orders import attempt
 from .pools import ZERO_ADDRESS, PoolResolver, calldata, selector
-from .rpc import RPCError
+from .rpc import RPCError, RPCResponseError
 
 TRANSFER_TOPIC = '0x' + keccak(text='Transfer(address,address,uint256)').hex()
 SWAP_V2_TOPIC = '0x' + keccak(text='Swap(address,uint256,uint256,uint256,uint256,address)').hex()
@@ -184,10 +184,27 @@ class UniswapRobinhoodExecutionAdapter:
         decimals = 18 if self.settings.amount_mode == 'ETH' else self.settings.buy_asset_decimals
         amount_in = raw_amount(amount, decimals)
         if pool['version'] == 'v4':
-            return Decimal(await self._quote_v4(amount_in, pool, self.v4_input_asset))
+            _, output = await asyncio.gather(
+                self._assert_v4_permit2_compatible(signal.token_address),
+                self._quote_v4(amount_in, pool, self.v4_input_asset),
+            )
+            return Decimal(output)
         if pool['version'] == 'v3':
             return Decimal(await self._quote_v3(amount_in, pool, 'buy'))
         return Decimal(await self._quote_v2(amount_in, pool['path_buy']))
+
+    async def _assert_v4_permit2_compatible(self, token):
+        request = {
+            'from': self.settings.wallet_address,
+            'to': token,
+            'data': calldata(
+                'approve(address,uint256)', ['address', 'uint256'],
+                [self.resolver.contracts['permit2'], 1]),
+        }
+        try:
+            await self.rpc.call('eth_call', [request, 'latest'])
+        except RPCResponseError:
+            raise ExecutionFailure('V4_TOKEN_PERMIT2_UNSUPPORTED') from None
 
     @staticmethod
     def _v3_swap_calldata(pool, side, amount_in, minimum, deadline, recipient, unwrap=False):
@@ -206,7 +223,7 @@ class UniswapRobinhoodExecutionAdapter:
         return calldata('multicall(uint256,bytes[])', ['uint256', 'bytes[]'], [deadline, calls])
 
     async def _base_transaction(self, to, data, value=0):
-        tx = {'to': to, 'data': data, 'value': value,
+        tx = {'to': to_checksum_address(to), 'data': data, 'value': value,
               'chainId': 4663, 'gasPrice': int(await self.rpc.call('eth_gasPrice'), 16)}
         estimate_request = {**tx, 'from': self.settings.wallet_address}
         for field in ('value', 'chainId', 'gasPrice'):

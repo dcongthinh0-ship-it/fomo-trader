@@ -4,12 +4,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 from eth_abi import decode, encode
-from eth_utils import keccak
+from eth_account import Account
+from eth_utils import keccak, to_checksum_address
 
 from trader.execution import ExecutionFailure
 from trader.models import TradeSignal
 from trader.pools import PoolResolver, selector
-from trader.rpc import RPCError
+from trader.rpc import RPCError, RPCResponseError
 from trader.uniswap import (
     TRANSFER_TOPIC,
     WETH_WITHDRAWAL_TOPIC,
@@ -305,13 +306,14 @@ async def test_gas_estimate_uses_hex_rpc_quantities_but_signing_transaction_keep
     instance = adapter(db)
     instance.rpc.call = AsyncMock(side_effect=['0x64', '0x5208'])
     instance.nonce.reserve = AsyncMock(return_value=7)
+    lowercase_router = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd'
 
-    transaction = await instance._base_transaction(POOL, '0x1234', value=42)
+    transaction = await instance._base_transaction(lowercase_router, '0x1234', value=42)
 
     estimate_call = instance.rpc.call.await_args_list[1]
     assert estimate_call.args[0] == 'eth_estimateGas'
     assert estimate_call.args[1][0] == {
-        'to': POOL,
+        'to': to_checksum_address(lowercase_router),
         'data': '0x1234',
         'value': '0x2a',
         'chainId': '0x1237',
@@ -319,7 +321,7 @@ async def test_gas_estimate_uses_hex_rpc_quantities_but_signing_transaction_keep
         'from': WALLET,
     }
     assert transaction == {
-        'to': POOL,
+        'to': to_checksum_address(lowercase_router),
         'data': '0x1234',
         'value': 42,
         'chainId': 4663,
@@ -327,6 +329,18 @@ async def test_gas_estimate_uses_hex_rpc_quantities_but_signing_transaction_keep
         'gas': 25200,
         'nonce': 7,
     }
+
+
+async def test_base_transaction_is_accepted_by_eth_account_signer(db):
+    instance = adapter(db)
+    instance.rpc.call = AsyncMock(side_effect=['0x64', '0x5208'])
+    instance.nonce.reserve = AsyncMock(return_value=7)
+    transaction = await instance._base_transaction(
+        '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', '0x1234', value=42)
+
+    signed = Account.sign_transaction(transaction, '0x' + '1' * 64)
+
+    assert signed.hash
 
 
 async def test_v3_native_sell_approves_swaps_and_unwraps_weth(db):
@@ -367,9 +381,14 @@ async def test_v3_native_sell_proceeds_use_router_weth_withdrawal(db):
 
 async def test_v4_buy_quote_uses_exact_input_single(db):
     instance = adapter(db)
+    instance.rpc.call = AsyncMock(return_value='0x')
     instance.rpc.eth_call = AsyncMock(return_value=encoded(['uint256', 'uint256'], [123, 456]))
     result = await instance.quote_buy(signal(), v4_pool(), Decimal('0.002'))
     assert result == Decimal(123)
+    request = instance.rpc.call.await_args.args[1][0]
+    assert instance.rpc.call.await_args.args[0] == 'eth_call'
+    assert request['from'] == WALLET and request['to'] == TOKEN
+    assert request['data'].startswith('0x' + selector('approve(address,uint256)').hex())
     address, data = instance.rpc.eth_call.await_args.args
     assert address == contracts()['v4_quoter']
     assert data.startswith('0x' + selector(
@@ -387,6 +406,7 @@ async def test_v4_multihop_quote_and_calldata_use_exact_input_path(db):
     pool['pool_id'] = pool_id(target_key)
     pool['route_candidates'] = [{'keys': [bridge_key, target_key]}]
     instance = adapter(db)
+    instance.rpc.call = AsyncMock(return_value='0x')
     instance.rpc.eth_call = AsyncMock(return_value=encoded(['uint256', 'uint256'], [123, 456]))
     instance._base_transaction = AsyncMock(return_value={'nonce': 1})
 
@@ -405,6 +425,16 @@ async def test_v4_multihop_quote_and_calldata_use_exact_input_path(db):
     assert route[0] == ZERO_ADDRESS
     assert [hop[0] for hop in route[1]] == [quote, TOKEN]
     assert route[3:] == (2 * 10**15, 120)
+
+
+async def test_v4_buy_is_rejected_before_order_when_token_blocks_permit2(db):
+    instance = adapter(db)
+    instance.rpc.call = AsyncMock(
+        side_effect=RPCResponseError('eth_call', 3, 'execution reverted'))
+    instance.rpc.eth_call = AsyncMock(return_value=encoded(['uint256', 'uint256'], [123, 456]))
+
+    with pytest.raises(ExecutionFailure, match='V4_TOKEN_PERMIT2_UNSUPPORTED'):
+        await instance.quote_buy(signal(), v4_pool(), Decimal('0.002'))
 
 
 async def test_v4_native_buy_builds_universal_router_v211_plan(db):
