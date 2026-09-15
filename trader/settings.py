@@ -44,12 +44,18 @@ class Settings:
         if provider == 'public':
             self.rpc_url = os.getenv(
                 'ROBINHOOD_PUBLIC_RPC_URL', 'https://rpc.mainnet.chain.robinhood.com').strip()
+            self.rpc_send_url = os.getenv(
+                'ROBINHOOD_PUBLIC_SEQUENCER_URL',
+                'https://sequencer.mainnet.chain.robinhood.com').strip()
         elif provider == 'alchemy':
             self.rpc_url = os.getenv('ROBINHOOD_ALCHEMY_RPC_URL', '').strip()
             if not self.rpc_url:
                 raise ValueError('alchemy provider requires ROBINHOOD_ALCHEMY_RPC_URL')
+            self.rpc_send_url = self.rpc_url
         else:
             self.rpc_url = os.getenv('ROBINHOOD_TRADING_RPC_URL', '').strip()
+            self.rpc_send_url = os.getenv(
+                'ROBINHOOD_TRADING_RPC_SEND_URL', self.rpc_url).strip()
         self.rpc_provider = provider or 'legacy'
         provider_prefix = 'ROBINHOOD_ALCHEMY' if self.rpc_provider == 'alchemy' else 'ROBINHOOD_PUBLIC'
         default_rps = '20' if self.rpc_provider == 'alchemy' else '2'
@@ -102,7 +108,8 @@ class Settings:
         return value
 
     def _validate_live_credentials(self):
-        if not self.rpc_url or not self.private_key_file or not Path(self.private_key_file).is_file():
+        if (not self.rpc_url or not self.rpc_send_url or not self.private_key_file
+                or not Path(self.private_key_file).is_file()):
             raise ValueError('live trading requires RPC and private-key file')
         key = Path(self.private_key_file).read_text().strip()
         derived = Account.from_key(key).address

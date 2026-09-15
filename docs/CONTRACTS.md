@@ -1,6 +1,6 @@
 # Robinhood Chain 合约核验清单
 
-核验日期：2026-09-11。链 ID `4663`。官方主网 RPC 对下列地址执行 `eth_getCode(..., latest)` 均返回非空 bytecode；括号内为返回十六进制字符串长度。官方公共 RPC 仅用于只读交叉核验，不用于生产广播。
+核验日期：2026-09-15。链 ID `4663`。官方主网 RPC 对下列地址执行 `eth_getCode(..., latest)` 均返回非空 bytecode；括号内为返回十六进制字符串长度。小额实盘已由用户明确授权；public 模式只读走公共 RPC，广播走官方 Sequencer，Alchemy 模式读写走用户所选 Alchemy URL。
 
 主要来源：
 
@@ -24,7 +24,7 @@
 | WETH | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` | 链资产 | Robinhood 官方文档 + Uniswap 构造参数 | 有（4406） | 否 |
 | USDG | `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` | ERC-20 | Robinhood 官方文档 | 有（342） | 否 |
 
-“当前允许实盘”全部为否，不代表地址未核验，而是尚未完成本地 fork/testnet 的完整买入、授权、卖出、nonce 重启恢复与 receipt 解析验收，也未获得用户对 Robinhood Chain 主网小额闭环的独立明确授权。
+表中历史“当前允许实盘”列记录初始审查状态；实际运行仍由本机未入库的 `LIVE_TRADING_ENABLED` 控制。用户已在 2026-09-15 明确授权专用小额钱包主网交易，代码默认与示例配置继续保持 `false`。
 
 ## 代码支持状态
 

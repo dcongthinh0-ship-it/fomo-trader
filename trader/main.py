@@ -24,7 +24,8 @@ async def serve():
     db = DB(settings.database)
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=8)) as session:
         rpc = RPC(session, settings.rpc_url, settings.rpc_rps,
-                  max_in_flight=settings.rpc_max_in_flight) if settings.rpc_url else None
+                  max_in_flight=settings.rpc_max_in_flight,
+                  send_url=settings.rpc_send_url) if settings.rpc_url else None
         if settings.adapter == 'fake':
             if settings.live:
                 raise ValueError('fake adapter cannot run with live trading enabled')

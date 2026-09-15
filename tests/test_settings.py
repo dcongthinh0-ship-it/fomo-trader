@@ -12,6 +12,7 @@ def clear(monkeypatch):
                  'TRADER_WALLET_ADDRESS', 'TRADER_PRIVATE_KEY_FILE',
                  'MAX_OPEN_POSITIONS',
                  'ROBINHOOD_TRADING_RPC_PROVIDER', 'ROBINHOOD_PUBLIC_RPC_URL',
+                 'ROBINHOOD_PUBLIC_SEQUENCER_URL',
                  'ROBINHOOD_ALCHEMY_RPC_URL', 'ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND',
                  'ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT',
                  'ROBINHOOD_PUBLIC_RPC_REQUESTS_PER_SECOND',
@@ -77,14 +78,16 @@ def test_live_wallet_matching_random_test_key_is_accepted(monkeypatch, tmp_path)
     assert Settings().wallet_address == account.address
 
 
-@pytest.mark.parametrize(('provider', 'expected'), [
-    ('public', 'https://public.example'),
-    ('alchemy', 'https://alchemy.example/v2/test-key'),
+@pytest.mark.parametrize(('provider', 'expected', 'expected_send'), [
+    ('public', 'https://public.example', 'https://sequencer.example'),
+    ('alchemy', 'https://alchemy.example/v2/test-key', 'https://alchemy.example/v2/test-key'),
 ])
-def test_rpc_provider_can_switch_between_public_and_alchemy(monkeypatch, provider, expected):
+def test_rpc_provider_can_switch_between_public_and_alchemy(
+        monkeypatch, provider, expected, expected_send):
     clear(monkeypatch)
     monkeypatch.setenv('ROBINHOOD_TRADING_RPC_PROVIDER', provider)
     monkeypatch.setenv('ROBINHOOD_PUBLIC_RPC_URL', 'https://public.example')
+    monkeypatch.setenv('ROBINHOOD_PUBLIC_SEQUENCER_URL', 'https://sequencer.example')
     monkeypatch.setenv('ROBINHOOD_ALCHEMY_RPC_URL', 'https://alchemy.example/v2/test-key')
     monkeypatch.setenv('ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND',
                        '2' if provider == 'public' else '20')
@@ -94,6 +97,7 @@ def test_rpc_provider_can_switch_between_public_and_alchemy(monkeypatch, provide
     settings = Settings()
     assert settings.rpc_provider == provider
     assert settings.rpc_url == expected
+    assert settings.rpc_send_url == expected_send
     assert settings.rpc_rps == (2 if provider == 'public' else 20)
     assert settings.rpc_max_in_flight == (1 if provider == 'public' else 8)
 

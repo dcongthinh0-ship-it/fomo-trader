@@ -47,6 +47,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 17. `eth_estimateGas` 的 `value/chainId/gasPrice` 必须按 JSON-RPC quantity 编码为 `0x...` 字符串；本地签名交易仍保存整数，且 `to` 统一转换为 EIP-55 checksum 地址，避免 Robinhood Go 节点以 `-32602` 拒绝模拟或 `eth-account` 以 `TypeError` 拒绝签名 V2/V3/V4 共用的构建路径。
 18. V4 买入报价与代币对 Permit2 的只读授权模拟并行执行；若代币明确拒绝 Permit2，则以 `V4_TOKEN_PERMIT2_UNSUPPORTED` 在创建订单前失败关闭，避免买入后无法通过官方 Universal Router 卖出。RPC 暂时不可用仍按瞬时错误重试，不误判为代币不兼容。
 19. Uniswap 执行器启动时必须用链上 pending nonce 覆盖本地缓存；若本地签名失败，必须立即再次对账。这样 gas 模拟后、广播前的失败不会遗留 nonce 空洞，未知广播仍由订单 tx hash 恢复流程防止重复发送。
+20. public 模式的只读查询走官方公共 RPC，`eth_sendRawTransaction` 单独走官方 Sequencer；Alchemy 模式读写均走所选 Alchemy URL。所有本地交易哈希统一保存为 `0x` 加 64 位十六进制，receipt/transaction 查询也会兼容修复历史无前缀值。BUY 广播结果未知时只查询原哈希；信号过期且 receipt 与 transaction 都不存在才终止为 `EXPIRED/BROADCAST_NOT_FOUND` 并对账 nonce，绝不重新买入旧信号。
 
 ## 数据状态
 

@@ -24,9 +24,13 @@ class FakeSession:
     def __init__(self, responses):
         self.responses = list(responses)
         self.starts = []
+        self.urls = []
+        self.requests = []
 
-    def post(self, *_, **__):
+    def post(self, url, **kwargs):
         self.starts.append(time.monotonic())
+        self.urls.append(url)
+        self.requests.append(kwargs['json'])
         return self.responses.pop(0)
 
 
@@ -79,3 +83,18 @@ async def test_generic_upstream_server_error_is_retried_but_revert_is_not():
     with pytest.raises(RPCResponseError):
         await RPC(reverted, 'https://rpc.invalid', 1000).call('eth_call', retries=1)
     assert len(reverted.starts) == 1
+
+
+async def test_raw_transaction_uses_sequencer_but_receipts_use_read_rpc_and_normalized_hash():
+    session = FakeSession([
+        FakeResponse(200, {'result': '0x' + 'a' * 64}),
+        FakeResponse(200, {'result': None}),
+    ])
+    rpc = RPC(session, 'https://read.invalid', requests_per_second=1000,
+              send_url='https://sequencer.invalid')
+
+    assert await rpc.send_raw_transaction('0x1234') == '0x' + 'a' * 64
+    assert await rpc.receipt('b' * 64) is None
+
+    assert session.urls == ['https://sequencer.invalid', 'https://read.invalid']
+    assert session.requests[1]['params'] == ['0x' + 'b' * 64]

@@ -19,6 +19,7 @@
 - Gas 模拟请求将 `value/chainId/gasPrice` 编码为 JSON-RPC 十六进制 quantity，而签名交易继续使用整数并将 `to` 转为 EIP-55 checksum；防止官方 Go 节点返回 `-32602` 以及 `eth-account` 因全小写 Router 地址拒绝签名。
 - V4 买入前并行模拟代币对 Permit2 的授权；明确回滚的代币以 `V4_TOKEN_PERMIT2_UNSUPPORTED` 在创建订单前拒绝，避免买入后无法使用 Universal Router 卖出，普通 RPC 临时失败仍保留重试语义。
 - Uniswap 执行器启动时从链上 pending nonce 对账；本地签名异常也会立即对账，防止签名前失败把本地 nonce 永久抬高并造成后续交易卡在 nonce 空洞。
+- public 模式将广播定向到官方 Sequencer、只读与 receipt 查询保留官方公共 RPC；交易哈希统一规范成 `0x` 前缀。广播未知的 BUY 过期后只有在 receipt 与 transaction 均不存在时才以 `BROADCAST_NOT_FOUND` 安全终止，不补买并重新对账 nonce。
 
 ## 只读主网核验
 

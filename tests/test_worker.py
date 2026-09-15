@@ -161,6 +161,27 @@ async def test_receipt_timeout_recovers_without_second_buy(db, valid_payload):
     assert db.conn.execute("SELECT count(*) FROM orders WHERE side='BUY'").fetchone()[0] == 1
 
 
+async def test_expired_unknown_buy_not_found_on_chain_is_closed_without_resubmission(
+        db, valid_payload):
+    accept(db, valid_payload, expires=110)
+    tx_hash = '0x' + 'c' * 64
+    adapter = FakeExecutionAdapter()
+    adapter.submit_buy = AsyncMock(side_effect=SubmissionUnknown(tx_hash, 0))
+    worker = TradingWorker(db, adapter, worker_settings())
+
+    assert await worker.buy_once(now=101)
+    adapter.receipt_by_hash = AsyncMock(return_value=None)
+    adapter.transaction_by_hash = AsyncMock(return_value=None)
+    adapter.reconcile_nonce = AsyncMock()
+
+    assert await worker.buy_once(now=111)
+    assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'EXPIRED'
+    order = db.conn.execute("SELECT * FROM orders WHERE side='BUY'").fetchone()
+    assert order['status'] == 'FAILED' and order['error_code'] == 'BROADCAST_NOT_FOUND'
+    adapter.submit_buy.assert_awaited_once()
+    adapter.reconcile_nonce.assert_awaited_once_with()
+
+
 async def test_sell_failure_keeps_open_then_marks_stuck(db, valid_payload):
     accept(db, valid_payload)
     adapter = FakeExecutionAdapter(fail_sell='quote')

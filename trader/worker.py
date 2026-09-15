@@ -156,7 +156,8 @@ class TradingWorker:
             attempt(self.db, signal.event_id, 'BUY', status, now, error_code=exc.code)
         return True
 
-    async def recover_submitted(self, event_id, side):
+    async def recover_submitted(self, event_id, side, now=None):
+        now = int(now or time.time())
         order = self.db.conn.execute('SELECT * FROM orders WHERE event_id=? AND side=?', (event_id, side)).fetchone()
         if order and order['status'] == 'CREATED' and not order['tx_hash']:
             with self.db.conn:
@@ -171,6 +172,20 @@ class TradingWorker:
             return False
         receipt = await self.adapter.receipt_by_hash(order['tx_hash'])
         if not receipt:
+            signal = self.db.conn.execute(
+                'SELECT expires_at FROM signals WHERE event_id=?', (event_id,)).fetchone()
+            if side == 'BUY' and signal and signal['expires_at'] <= now:
+                transaction = await self.adapter.transaction_by_hash(order['tx_hash'])
+                if transaction:
+                    return False
+                with self.db.conn:
+                    update_order(self.db, event_id, side, 'FAILED', now, commit=False,
+                                 error_code='BROADCAST_NOT_FOUND')
+                    self.db.conn.execute(
+                        "UPDATE signals SET status='EXPIRED',last_error='BROADCAST_NOT_FOUND' "
+                        'WHERE event_id=?', (event_id,))
+                await self.adapter.reconcile_nonce()
+                return True
             return False
         if int(receipt.get('status', '0x0'), 16) != 1:
             update_order(self.db, event_id, side, 'REVERTED', error_code=f'{side}_REVERTED')

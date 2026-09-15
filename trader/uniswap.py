@@ -312,7 +312,8 @@ class UniswapRobinhoodExecutionAdapter:
         except Exception:
             await self.nonce.reconcile()
             raise
-        tx_hash, nonce = signed.hash.hex(), transaction['nonce']
+        tx_hash = '0x' + signed.hash.hex().removeprefix('0x')
+        nonce = transaction['nonce']
         if event_id and side in ('BUY', 'SELL'):
             from .orders import update_order
             update_order(self.db, event_id, side, 'SIGNED', tx_hash=tx_hash, nonce=nonce)
@@ -341,6 +342,12 @@ class UniswapRobinhoodExecutionAdapter:
 
     async def receipt_by_hash(self, tx_hash):
         return await self.rpc.receipt(tx_hash)
+
+    async def transaction_by_hash(self, tx_hash):
+        return await self.rpc.transaction(tx_hash)
+
+    async def reconcile_nonce(self):
+        return await self.nonce.reconcile()
 
     def parse_actual_token_received(self, receipt, token, wallet):
         total = 0
