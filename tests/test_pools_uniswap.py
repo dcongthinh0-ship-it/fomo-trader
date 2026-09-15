@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -17,6 +18,7 @@ from trader.uniswap import (
     UniswapRobinhoodExecutionAdapter,
     address_topic,
     raw_amount,
+    rpc_error_facts,
 )
 
 V2_FACTORY = '0x' + '1' * 40
@@ -235,7 +237,7 @@ def test_raw_amount_never_rounds_or_allows_zero():
 def adapter(db, mode='ETH'):
     settings = SimpleNamespace(config={'contracts': contracts()}, amount_mode=mode,
                                buy_asset_address=INPUT, buy_asset_decimals=6, wallet_address=WALLET,
-                               deadline_seconds=60)
+                               deadline_seconds=60, max_fee_multiplier=Decimal('2'))
     return UniswapRobinhoodExecutionAdapter(db, AsyncMock(), AsyncMock(), settings)
 
 
@@ -302,7 +304,7 @@ async def test_nonce_is_not_reserved_when_gas_estimation_fails(db):
     instance.nonce.reserve.assert_not_awaited()
 
 
-async def test_gas_estimate_uses_hex_rpc_quantities_but_signing_transaction_keeps_integers(db):
+async def test_gas_estimate_uses_type2_hex_quantities_with_fee_headroom(db):
     instance = adapter(db)
     instance.rpc.call = AsyncMock(side_effect=['0x64', '0x5208'])
     instance.nonce.reserve = AsyncMock(return_value=7)
@@ -317,7 +319,9 @@ async def test_gas_estimate_uses_hex_rpc_quantities_but_signing_transaction_keep
         'data': '0x1234',
         'value': '0x2a',
         'chainId': '0x1237',
-        'gasPrice': '0x64',
+        'type': '0x2',
+        'maxFeePerGas': '0xc8',
+        'maxPriorityFeePerGas': '0x0',
         'from': WALLET,
     }
     assert transaction == {
@@ -325,7 +329,9 @@ async def test_gas_estimate_uses_hex_rpc_quantities_but_signing_transaction_keep
         'data': '0x1234',
         'value': 42,
         'chainId': 4663,
-        'gasPrice': 100,
+        'type': 2,
+        'maxFeePerGas': 200,
+        'maxPriorityFeePerGas': 0,
         'gas': 25200,
         'nonce': 7,
     }
@@ -350,7 +356,8 @@ async def test_signing_failure_reconciles_reserved_nonce_before_retry(db):
 
     with pytest.raises(ValueError):
         await instance.submit_buy({'to': to_checksum_address(POOL), 'data': '0x1234',
-                                   'value': 0, 'chainId': 4663, 'gasPrice': 1,
+                                   'value': 0, 'chainId': 4663, 'type': 2,
+                                   'maxFeePerGas': 2, 'maxPriorityFeePerGas': 0,
                                    'gas': 21000, 'nonce': 3})
 
     instance.nonce.reconcile.assert_awaited_once_with()
@@ -366,10 +373,41 @@ async def test_submitted_transaction_hash_is_stored_with_json_rpc_prefix(db):
     instance.rpc.send_raw_transaction = AsyncMock(side_effect=accept_raw)
     result = await instance.submit_buy({
         'to': to_checksum_address(POOL), 'data': '0x1234', 'value': 0,
-        'chainId': 4663, 'gasPrice': 1, 'gas': 21000, 'nonce': 0,
+        'chainId': 4663, 'type': 2, 'maxFeePerGas': 2,
+        'maxPriorityFeePerGas': 0, 'gas': 21000, 'nonce': 0,
     })
 
     assert result['tx_hash'].startswith('0x') and len(result['tx_hash']) == 66
+
+
+async def test_submission_error_keeps_sanitized_rpc_reason_for_diagnosis(db):
+    instance = adapter(db)
+    instance.settings.private_key = lambda: '0x' + '1' * 64
+    instance.rpc.send_raw_transaction = AsyncMock(side_effect=RPCResponseError(
+        'eth_sendRawTransaction', -32000,
+        'max fee per gas less than block base fee raw=0x' + 'a' * 200))
+    instance.rpc.receipt = AsyncMock(return_value=None)
+
+    with pytest.raises(ExecutionFailure, match='SUBMISSION_UNKNOWN'):
+        await instance.submit_buy({
+            'to': to_checksum_address(POOL), 'data': '0x1234', 'value': 0,
+            'chainId': 4663, 'type': 2, 'maxFeePerGas': 2,
+            'maxPriorityFeePerGas': 0, 'gas': 21000, 'nonce': 0,
+            '_event_id': 'e', '_side': 'BUY',
+        })
+
+    unknown = db.conn.execute(
+        "SELECT response_facts FROM execution_attempts WHERE status='UNKNOWN'").fetchone()
+    facts = json.loads(unknown['response_facts'])
+    assert facts == {'code': -32000, 'message':
+                     'max fee per gas less than block base fee raw=[hex]',
+                     'method': 'eth_sendRawTransaction', 'type': 'RPCResponseError'}
+
+
+def test_rpc_error_facts_never_keeps_long_hex_payload():
+    facts = json.loads(rpc_error_facts(RPCResponseError(
+        'eth_sendRawTransaction', -32000, 'bad 0x' + 'b' * 128)))
+    assert facts['message'] == 'bad [hex]'
 
 
 async def test_v3_native_sell_approves_swaps_and_unwraps_weth(db):

@@ -79,6 +79,10 @@ class Settings:
         self.buy_slippage_bps = int(os.getenv('BUY_MAX_SLIPPAGE_BPS', order['buy_max_slippage_bps']))
         self.sell_slippage_bps = int(os.getenv('SELL_MAX_SLIPPAGE_BPS', order['sell_max_slippage_bps']))
         self.deadline_seconds = int(os.getenv('TX_DEADLINE_SECONDS', order['tx_deadline_seconds']))
+        self.max_fee_multiplier = decimal(
+            os.getenv('TX_MAX_FEE_MULTIPLIER', '2'), 'TX_MAX_FEE_MULTIPLIER')
+        if not Decimal('1') <= self.max_fee_multiplier <= Decimal('10'):
+            raise ValueError('TX_MAX_FEE_MULTIPLIER must be between 1 and 10')
         self.price_poll_seconds = float(order.get('price_poll_seconds', 1))
         self.max_sell_attempts = int(order.get('max_sell_attempts', 3))
         self.max_open_positions = int(os.getenv(

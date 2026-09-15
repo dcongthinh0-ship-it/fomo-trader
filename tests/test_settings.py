@@ -11,6 +11,7 @@ def clear(monkeypatch):
     for name in ('LIVE_TRADING_ENABLED', 'BUY_AMOUNT_MODE', 'BUY_AMOUNT', 'BUY_ASSET_ADDRESS',
                  'TRADER_WALLET_ADDRESS', 'TRADER_PRIVATE_KEY_FILE',
                  'MAX_OPEN_POSITIONS',
+                 'TX_MAX_FEE_MULTIPLIER',
                  'ROBINHOOD_TRADING_RPC_PROVIDER', 'ROBINHOOD_PUBLIC_RPC_URL',
                  'ROBINHOOD_PUBLIC_SEQUENCER_URL',
                  'ROBINHOOD_ALCHEMY_RPC_URL', 'ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND',
@@ -31,6 +32,15 @@ def test_default_is_live_disabled_and_uses_small_eth_order(monkeypatch):
     assert settings.buy_asset_symbol == 'ETH'
     assert settings.max_open_positions == 3
     assert settings.take_profit_pct == 40
+    assert settings.max_fee_multiplier == 2
+
+
+@pytest.mark.parametrize('value', ('0.9', '10.1'))
+def test_max_fee_multiplier_has_safe_bounds(monkeypatch, value):
+    clear(monkeypatch)
+    monkeypatch.setenv('TX_MAX_FEE_MULTIPLIER', value)
+    with pytest.raises(ValueError, match='TX_MAX_FEE_MULTIPLIER'):
+        Settings()
 
 
 def test_max_open_positions_must_be_positive(monkeypatch):

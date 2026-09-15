@@ -63,6 +63,10 @@ class RPC:
                                 self.status = 'degraded'
                                 raise RPCResponseError(
                                     method, (error or {}).get('code'), (error or {}).get('message'))
+                            if attempt == retries and error:
+                                self.status = 'degraded'
+                                raise RPCResponseError(
+                                    method, error.get('code'), error.get('message'))
                             raise RPCError(f'{method}_FAILED')
                         self.status = 'ok'
                         return body['result']

@@ -69,6 +69,19 @@ async def test_rate_limit_response_is_retried():
     assert len(session.starts) == 2
 
 
+async def test_final_retryable_json_rpc_response_preserves_code_and_message():
+    session = FakeSession([FakeResponse(200, {
+        'error': {'code': -32000, 'message': 'max fee per gas less than block base fee'},
+    })])
+
+    with pytest.raises(RPCResponseError) as raised:
+        await RPC(session, 'https://rpc.invalid', 1000).call(
+            'eth_sendRawTransaction', retries=0)
+
+    assert raised.value.code == -32000
+    assert raised.value.message == 'max fee per gas less than block base fee'
+
+
 async def test_generic_upstream_server_error_is_retried_but_revert_is_not():
     transient = FakeSession([
         FakeResponse(200, {'error': {'code': -32000, 'message': 'upstream request failed'}}),

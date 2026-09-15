@@ -48,6 +48,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 18. V4 买入报价与代币对 Permit2 的只读授权模拟并行执行；若代币明确拒绝 Permit2，则以 `V4_TOKEN_PERMIT2_UNSUPPORTED` 在创建订单前失败关闭，避免买入后无法通过官方 Universal Router 卖出。RPC 暂时不可用仍按瞬时错误重试，不误判为代币不兼容。
 19. Uniswap 执行器启动时必须用链上 pending nonce 覆盖本地缓存；若本地签名失败，必须立即再次对账。这样 gas 模拟后、广播前的失败不会遗留 nonce 空洞，未知广播仍由订单 tx hash 恢复流程防止重复发送。
 20. public 模式的只读查询走官方公共 RPC，`eth_sendRawTransaction` 单独走官方 Sequencer；Alchemy 模式读写均走所选 Alchemy URL。所有本地交易哈希统一保存为 `0x` 加 64 位十六进制，receipt/transaction 查询也会兼容修复历史无前缀值。BUY 广播结果未知时只查询原哈希；信号过期且 receipt 与 transaction 都不存在才终止为 `EXPIRED/BROADCAST_NOT_FOUND` 并对账 nonce，绝不重新买入旧信号。
+21. 主网交易统一签为 EIP-1559 type 2；`maxFeePerGas` 默认取临近广播时 `eth_gasPrice × 2`，`maxPriorityFeePerGas=0`，使费用上限覆盖 Nitro 单区块最多约 2 倍的 base fee 上涨，同时实际支付仍由当块 base fee 决定。倍率只能配置在 1～10；最终 JSON-RPC 错误响应必须保留原始 code/message，不能降级成无原因的 `UNAVAILABLE`。广播异常事实写入 execution attempt 前会替换长十六进制载荷并截断，避免保存或暴露原始签名交易。
 
 ## 数据状态
 

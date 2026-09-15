@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 from decimal import Decimal
 
@@ -35,6 +36,14 @@ def raw_amount(amount, decimals):
     if value != value.to_integral_value() or value <= 0:
         raise ExecutionFailure('INVALID_ASSET_AMOUNT')
     return int(value)
+
+
+def rpc_error_facts(exc):
+    facts = {'type': type(exc).__name__}
+    if isinstance(exc, RPCResponseError):
+        message = re.sub(r'0x[0-9a-fA-F]{16,}', '[hex]', exc.message)
+        facts.update(method=exc.method, code=exc.code, message=message[:200])
+    return dumps(facts)
 
 
 def address_topic(address):
@@ -223,10 +232,13 @@ class UniswapRobinhoodExecutionAdapter:
         return calldata('multicall(uint256,bytes[])', ['uint256', 'bytes[]'], [deadline, calls])
 
     async def _base_transaction(self, to, data, value=0):
+        suggested_price = int(await self.rpc.call('eth_gasPrice'), 16)
+        max_fee = int(Decimal(suggested_price) * self.settings.max_fee_multiplier)
         tx = {'to': to_checksum_address(to), 'data': data, 'value': value,
-              'chainId': 4663, 'gasPrice': int(await self.rpc.call('eth_gasPrice'), 16)}
+              'chainId': 4663, 'type': 2, 'maxFeePerGas': max_fee,
+              'maxPriorityFeePerGas': 0}
         estimate_request = {**tx, 'from': self.settings.wallet_address}
-        for field in ('value', 'chainId', 'gasPrice'):
+        for field in ('value', 'chainId', 'type', 'maxFeePerGas', 'maxPriorityFeePerGas'):
             estimate_request[field] = hex(estimate_request[field])
         estimate = await self.rpc.call('eth_estimateGas', [estimate_request])
         tx['gas'] = int(int(estimate, 16) * 1.2)
@@ -322,12 +334,15 @@ class UniswapRobinhoodExecutionAdapter:
             returned = await self.rpc.send_raw_transaction('0x' + signed.raw_transaction.hex())
             if returned.lower().removeprefix('0x') != tx_hash.lower().removeprefix('0x'):
                 raise ExecutionFailure('RPC_TX_HASH_MISMATCH')
-        except RPCError:
+        except RPCError as exc:
             try:
                 if await self.rpc.receipt(tx_hash):
                     return {'tx_hash': tx_hash, 'nonce': nonce}
             except RPCError:
                 pass
+            if event_id and side in ('BUY', 'SELL'):
+                attempt(self.db, event_id, side, 'UNKNOWN', tx_hash=tx_hash, nonce=nonce,
+                        error_code='SUBMISSION_UNKNOWN', response_facts=rpc_error_facts(exc))
             raise SubmissionUnknown(tx_hash, nonce) from None
         return {'tx_hash': tx_hash, 'nonce': nonce}
 
