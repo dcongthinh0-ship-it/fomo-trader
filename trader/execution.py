@@ -32,9 +32,9 @@ class ExecutionAdapter(Protocol):
 @dataclass
 class FakeExecutionAdapter:
     buy_quote: Decimal = Decimal('100')
-    sell_quote: Decimal = Decimal('13')
+    sell_quote: Decimal = Decimal('14')
     buy_received: Decimal = Decimal('100')
-    sell_received: Decimal = Decimal('13')
+    sell_received: Decimal = Decimal('14')
     fail_buy: str | None = None
     fail_sell: str | None = None
 

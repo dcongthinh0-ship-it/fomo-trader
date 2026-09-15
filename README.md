@@ -1,6 +1,6 @@
 # fomo-trader
 
-Robinhood Chain（chain id `4663`）独立自动交易服务。它只接收 `fomo-monitor` 已通过固定三条件筛选的短 TTL 信号，直接核验 Uniswap 池并管理买入、receipt、持仓和固定 30% 全仓止盈。默认不交易。
+Robinhood Chain（chain id `4663`）独立自动交易服务。它只接收 `fomo-monitor` 已通过固定三条件筛选的短 TTL 信号，直接核验 Uniswap 池并管理买入、receipt、持仓和固定 40% 全仓止盈。默认不交易。
 
 ## 安全边界
 
@@ -25,7 +25,7 @@ hex(HMAC-SHA256(shared_secret, X-Signal-Timestamp + "." + raw_json_bytes))
 服务不会重新查询市值或流动性，也不会增加 K 线、风控评分、探针、止损、回撤、加仓或超时卖出。买入确认后以 receipt 的实际 token 数量建仓：
 
 ```text
-target_proceeds = actual_cost × 1.30
+target_proceeds = actual_cost × 1.40
 ```
 
 gas 不进入收益目标；只有全仓可执行报价达到目标才创建唯一 SELL。卖出失败保持 OPEN，有限重试后标记 `POSITION_STUCK`。

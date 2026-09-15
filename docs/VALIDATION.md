@@ -6,7 +6,7 @@
 
 - HMAC 原始请求体、篡改、时间戳、版本、chain id、地址、TTL、eligible 校验。
 - event_id 与 BUY/SELL 唯一约束、旧状态持久化、live=false 不执行。
-- 固定 30% 目标、低于目标不卖、FakeExecutionAdapter 买卖闭环、买卖失败状态。
+- 固定 40% 目标、低于目标不卖、FakeExecutionAdapter 买卖闭环、买卖失败状态。
 - nonce 取链上 pending 与本地保留值的较大者及重启 reconcile。
 - receipt 超时后保留 tx hash，重启只查原交易并恢复建仓，不创建第二笔 BUY。
 - 广播前 RPC 失败复用同一 `CREATED` 订单，gas estimate 失败不消耗 nonce；买卖提交不确定和 approval 超时均按原 tx hash 恢复，不重复发送。

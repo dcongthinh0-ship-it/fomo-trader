@@ -9,7 +9,7 @@ def open_position(db, event_id, token, input_asset, actual_cost, quantity, buy_t
     now = int(now or time.time())
     cost, qty = Decimal(str(actual_cost)), Decimal(str(quantity))
     pid = hashlib.sha256(f'{event_id}:position'.encode()).hexdigest()
-    target = cost * Decimal('1.30')
+    target = cost * Decimal('1.40')
     with db.conn if commit else nullcontext():
         db.conn.execute('INSERT OR IGNORE INTO positions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                         (pid, event_id, token.lower(), input_asset, str(cost), str(qty),

@@ -66,10 +66,10 @@ class Settings:
         order = self.config['order']
         self.amount_mode = os.getenv('BUY_AMOUNT_MODE', order['amount_mode']).upper()
         self.amount = decimal(os.getenv('BUY_AMOUNT', order['amount']), 'BUY_AMOUNT')
-        self.take_profit_pct = decimal(order.get('take_profit_pct', '30'), 'take_profit_pct')
+        self.take_profit_pct = decimal(order.get('take_profit_pct', '40'), 'take_profit_pct')
         self.sell_percentage = decimal(order.get('sell_percentage', '100'), 'sell_percentage')
-        if self.take_profit_pct != Decimal('30') or self.sell_percentage != Decimal('100'):
-            raise ValueError('strategy is fixed at 30% take profit and 100% sell')
+        if self.take_profit_pct != Decimal('40') or self.sell_percentage != Decimal('100'):
+            raise ValueError('strategy is fixed at 40% take profit and 100% sell')
         self.buy_slippage_bps = int(os.getenv('BUY_MAX_SLIPPAGE_BPS', order['buy_max_slippage_bps']))
         self.sell_slippage_bps = int(os.getenv('SELL_MAX_SLIPPAGE_BPS', order['sell_max_slippage_bps']))
         self.deadline_seconds = int(os.getenv('TX_DEADLINE_SECONDS', order['tx_deadline_seconds']))

@@ -24,13 +24,13 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 - `execution.py`、`worker.py`：适配器协议和可恢复买卖状态机。
 - `rpc.py`、`nonce.py`：隔离 RPC、并发安全的请求起始速率限制、仅瞬时故障有限重试、确定性 JSON-RPC 拒绝快速失败、nonce 协调与恢复。
 - `pools.py`、`uniswap.py`：官方部署核验、池识别、V2/V3 直接与同协议单桥、V3 QuoterV2 + SwapRouter02，以及 V4 PoolKey 恢复、StateView/Multicall3 活跃流动性筛选、V4Quoter 多池报价、Universal Router 多池买卖、Permit2、签名与 receipt 解析。
-- `orders.py`、`positions.py`：唯一订单和 30% 全仓止盈领域写入。
+- `orders.py`、`positions.py`：唯一订单和 40% 全仓止盈领域写入。
 
 ## 不可破坏约束
 
 1. `LIVE_TRADING_ENABLED=false` 是默认值；未授权不得广播。
 2. 同一 event 最多一个 BUY 与一个 SELL；签名前即保存唯一订单，签名后、广播前先持久化 tx hash/nonce；超时或重启只按 receipt 恢复，并可重新核验池上下文解析卖出结果，不能重买。
-3. 目标固定为 `actual_cost × 1.30`，gas 不计入成本；只卖 100%，不含止损或其他策略。
+3. 目标固定为 `actual_cost × 1.40`，gas 不计入成本；只卖 100%，不含止损或其他策略。
 4. 市值与流动性只来自信号且不在本服务重查；链上池/路由核验不是新入场条件。
 5. V4 pool id 是 32 字节标识，绝不能当合约地址调用；PoolKey 必须来自 PoolManager 的对应 `Initialize` 日志或信号字段，并重新计算 pool id 核对。
 6. 私钥和共享密钥只从只读文件读取，且被 Git/Docker build context 排除；Compose 未配置私钥时挂载 `/dev/null`，live 启动必然失败；健康接口与日志不泄露任何密钥或完整 RPC URL。

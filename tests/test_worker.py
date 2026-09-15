@@ -41,16 +41,16 @@ async def test_expired_signal_never_buys(db, valid_payload):
     assert db.conn.execute('SELECT count(*) FROM orders').fetchone()[0] == 0
 
 
-async def test_fake_adapter_full_buy_and_30_percent_sell(db, valid_payload):
+async def test_fake_adapter_full_buy_and_40_percent_sell(db, valid_payload):
     accept(db, valid_payload)
     adapter = FakeExecutionAdapter(buy_quote=Decimal('100'), buy_received=Decimal('80'),
-                                   sell_quote=Decimal('13'), sell_received=Decimal('12.8'))
+                                   sell_quote=Decimal('14'), sell_received=Decimal('13.8'))
     worker = TradingWorker(db, adapter, worker_settings())
     assert await worker.buy_once(now=101)
     position = db.conn.execute('SELECT * FROM positions').fetchone()
     assert position['actual_cost'] == '10'
     assert position['token_quantity'] == '80'
-    assert position['target_proceeds'] == '13.00'
+    assert position['target_proceeds'] == '14.00'
     assert db.conn.execute("SELECT count(*) FROM orders WHERE side='BUY'").fetchone()[0] == 1
     assert await worker.sell_once(now=102)
     assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'CLOSED'
@@ -60,7 +60,7 @@ async def test_fake_adapter_full_buy_and_30_percent_sell(db, valid_payload):
 
 async def test_sell_does_not_trigger_below_exact_target(db, valid_payload):
     accept(db, valid_payload)
-    adapter = FakeExecutionAdapter(sell_quote=Decimal('12.999'))
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('13.999'))
     worker = TradingWorker(db, adapter, worker_settings())
     await worker.buy_once(now=101)
     assert not await worker.sell_once(now=102)
@@ -129,7 +129,7 @@ async def test_sell_failure_keeps_open_then_marks_stuck(db, valid_payload):
 
 async def test_reverted_sell_receipt_does_not_close_position(db, valid_payload):
     accept(db, valid_payload)
-    adapter = FakeExecutionAdapter(sell_quote=Decimal('13'), fail_sell='receipt')
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('14'), fail_sell='receipt')
     worker = TradingWorker(db, adapter, worker_settings())
     await worker.buy_once(now=101)
     await worker.sell_once(now=102)
@@ -139,7 +139,7 @@ async def test_reverted_sell_receipt_does_not_close_position(db, valid_payload):
 
 async def test_successful_sell_with_unparsed_proceeds_is_never_resubmitted(db, valid_payload):
     accept(db, valid_payload)
-    adapter = FakeExecutionAdapter(sell_quote=Decimal('13'), sell_received=Decimal('0'))
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('14'), sell_received=Decimal('0'))
     worker = TradingWorker(db, adapter, worker_settings())
     await worker.buy_once(now=101)
 
@@ -154,7 +154,7 @@ async def test_successful_sell_with_unparsed_proceeds_is_never_resubmitted(db, v
 
 async def test_ambiguous_sell_submission_recovers_without_second_sell(db, valid_payload):
     accept(db, valid_payload)
-    adapter = FakeExecutionAdapter(sell_quote=Decimal('13'))
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('14'))
     worker = TradingWorker(db, adapter, worker_settings())
     await worker.buy_once(now=101)
     sell_hash = '0x' + 'c' * 64
@@ -165,7 +165,7 @@ async def test_ambiguous_sell_submission_recovers_without_second_sell(db, valid_
     order = db.conn.execute("SELECT * FROM orders WHERE side='SELL'").fetchone()
     assert order['status'] == 'UNKNOWN' and order['tx_hash'] == sell_hash
 
-    restarted_adapter = FakeExecutionAdapter(sell_received=Decimal('13'))
+    restarted_adapter = FakeExecutionAdapter(sell_received=Decimal('14'))
     restarted_adapter.submit_sell = AsyncMock()
     restarted = TradingWorker(db, restarted_adapter, worker_settings())
     assert await restarted.sell_once(now=103)
@@ -175,7 +175,7 @@ async def test_ambiguous_sell_submission_recovers_without_second_sell(db, valid_
 
 async def test_pending_approval_does_not_consume_sell_failure_budget(db, valid_payload):
     accept(db, valid_payload)
-    adapter = FakeExecutionAdapter(sell_quote=Decimal('13'))
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('14'))
     worker = TradingWorker(db, adapter, worker_settings(max_sell_attempts=1))
     await worker.buy_once(now=101)
     adapter.ensure_token_approval = AsyncMock(
@@ -202,10 +202,10 @@ async def test_below_target_position_does_not_starve_later_positions(db, valid_p
                       '0x' + str(index) * 64, now=100 + index)
         with db.conn:
             db.conn.execute("UPDATE signals SET status='OPEN' WHERE event_id=?", (payload['event_id'],))
-    adapter = FakeExecutionAdapter(sell_quote=Decimal('13'))
+    adapter = FakeExecutionAdapter(sell_quote=Decimal('14'))
     adapter.quote_full_sell = AsyncMock(
         side_effect=lambda position: Decimal('12') if position['event_id'] == first['event_id']
-        else Decimal('13'))
+        else Decimal('14'))
     worker = TradingWorker(db, adapter, worker_settings())
 
     assert not await worker.sell_once(now=200)
@@ -231,13 +231,13 @@ async def test_buy_finalization_rolls_back_as_one_transaction(db, valid_payload,
     assert db.conn.execute('SELECT count(*) FROM positions').fetchone()[0] == 0
 
 
-async def test_six_usd_buys_then_exactly_7_8_sells_full_position(db, valid_payload):
+async def test_six_usd_buys_then_exactly_8_4_sells_full_position(db, valid_payload):
     accept(db, valid_payload)
-    adapter = FakeExecutionAdapter(buy_received=Decimal('600'), sell_quote=Decimal('7.8'))
+    adapter = FakeExecutionAdapter(buy_received=Decimal('600'), sell_quote=Decimal('8.4'))
     first = TradingWorker(db, adapter, worker_settings(amount='6'))
     await first.buy_once(now=101)
     position = db.conn.execute('SELECT * FROM positions').fetchone()
-    assert position['target_proceeds'] == '7.80'
+    assert position['target_proceeds'] == '8.40'
     restarted = TradingWorker(db, adapter, worker_settings(amount='6'))
     assert await restarted.sell_once(now=102)
     sell = db.conn.execute("SELECT * FROM orders WHERE side='SELL'").fetchone()

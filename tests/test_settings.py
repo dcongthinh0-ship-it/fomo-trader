@@ -5,6 +5,7 @@ from trader.settings import Settings
 
 
 def clear(monkeypatch):
+    monkeypatch.setattr('trader.settings.load_env', lambda *_: None)
     for name in ('LIVE_TRADING_ENABLED', 'BUY_AMOUNT_MODE', 'BUY_ASSET_ADDRESS',
                  'TRADER_WALLET_ADDRESS', 'TRADER_PRIVATE_KEY_FILE',
                  'ROBINHOOD_TRADING_RPC_PROVIDER', 'ROBINHOOD_PUBLIC_RPC_URL',
@@ -23,6 +24,20 @@ def test_default_is_live_disabled_and_uses_verified_usdg(monkeypatch):
     assert settings.live is False
     assert settings.buy_asset_symbol == 'USDG'
     assert settings.buy_asset_address == '0x5fc5360d0400a0fd4f2af552add042d716f1d168'
+    assert settings.take_profit_pct == 40
+
+
+def test_take_profit_is_fixed_at_40_percent(monkeypatch, tmp_path):
+    clear(monkeypatch)
+    config = tmp_path / 'trading.yaml'
+    config.write_text('chain_id: 4663\norder:\n  amount_mode: USD\n  amount: "6"\n'
+                      '  take_profit_pct: "30"\n  sell_percentage: "100"\n'
+                      '  buy_max_slippage_bps: 500\n  sell_max_slippage_bps: 500\n'
+                      '  tx_deadline_seconds: 60\ncontracts:\n'
+                      '  usdg: "0x5fc5360d0400a0fd4f2af552add042d716f1d168"\n')
+    monkeypatch.setenv('CONFIG_PATH', str(config))
+    with pytest.raises(ValueError, match='fixed at 40%'):
+        Settings()
 
 
 def test_live_wallet_key_mismatch_refuses_start(monkeypatch, tmp_path):
