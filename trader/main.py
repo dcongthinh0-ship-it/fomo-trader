@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 
 import aiohttp
 from aiohttp import web
@@ -10,10 +11,34 @@ from .api import create_app
 from .db import DB
 from .execution import FakeExecutionAdapter
 from .nonce import NonceManager
-from .rpc import RPC
+from .rpc import RPC, RPCError
 from .settings import Settings
 from .uniswap import UniswapRobinhoodExecutionAdapter
 from .worker import TradingWorker
+
+
+async def run_worker_after_nonce_ready(worker, nonce, db, retry_delay=1, max_retry_delay=15):
+    delay = retry_delay
+    while True:
+        try:
+            await nonce.reconcile()
+            with db.conn:
+                db.set_state('worker_startup_pending', False)
+                db.set_state('worker_last_error', None)
+            return await worker.run()
+        except asyncio.CancelledError:
+            raise
+        except RPCError as exc:
+            with db.conn:
+                db.set_state('worker_startup_pending', True)
+                db.set_state('worker_last_error', {
+                    'type': type(exc).__name__, 'phase': 'nonce_reconcile',
+                    'at': int(time.time()),
+                })
+            logging.getLogger(__name__).warning(
+                'nonce reconciliation retry type=%s delay=%s', type(exc).__name__, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_retry_delay)
 
 
 async def serve():
@@ -30,16 +55,20 @@ async def serve():
             if settings.live:
                 raise ValueError('fake adapter cannot run with live trading enabled')
             adapter = FakeExecutionAdapter()
+            nonce = None
         elif settings.adapter == 'uniswap':
             if rpc is None:
                 raise ValueError('uniswap adapter requires a configured trading RPC endpoint')
             nonce = NonceManager(db, rpc, settings.wallet_address)
-            await nonce.reconcile()
             adapter = UniswapRobinhoodExecutionAdapter(
                 db, rpc, nonce, settings)
         else:
             raise ValueError('unknown execution adapter')
         worker = TradingWorker(db, adapter, settings)
+        with db.conn:
+            db.set_state('worker_startup_pending', nonce is not None)
+            db.set_state('worker_heartbeat_at', None)
+            db.set_state('worker_last_error', None)
         app = create_app(db, settings, rpc)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -48,7 +77,8 @@ async def serve():
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
-        task = asyncio.create_task(worker.run())
+        task = asyncio.create_task(
+            run_worker_after_nonce_ready(worker, nonce, db) if nonce else worker.run())
         stopper = asyncio.create_task(stop.wait())
         done, _ = await asyncio.wait([task, stopper], return_when=asyncio.FIRST_COMPLETED)
         failure = next((item.exception() for item in done if item is task and item.exception()), None)

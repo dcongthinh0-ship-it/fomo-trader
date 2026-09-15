@@ -100,3 +100,17 @@ async def test_health_is_degraded_for_stuck_position(db, settings):
         assert body['service'] == 'degraded' and body['stuck_positions'] == 1
     finally:
         await client.close()
+
+
+async def test_health_is_degraded_while_nonce_startup_is_pending(db, settings):
+    db.set_state('worker_startup_pending', True)
+    rpc = type('RPCStatus', (), {'status': 'degraded'})()
+    client = TestClient(TestServer(create_app(db, settings, rpc)))
+    await client.start_server()
+    try:
+        body = await (await client.get('/health')).json()
+        assert body['service'] == 'degraded'
+        assert body['worker_startup_pending'] is True
+        assert body['rpc_status'] == 'degraded'
+    finally:
+        await client.close()

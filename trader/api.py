@@ -32,15 +32,20 @@ def create_app(db, settings, rpc=None):
             "SELECT count(*) FROM signals WHERE status='POSITION_STUCK'").fetchone()[0]
         heartbeat = db.state('worker_heartbeat_at')
         heartbeat_stale = heartbeat is not None and int(time.time()) - heartbeat > 15
+        startup_pending = bool(db.state('worker_startup_pending', False))
+        rpc_status = getattr(rpc, 'status', 'not_configured')
         return web.json_response({
-            'service': 'degraded' if stuck or stuck_signals or heartbeat_stale else 'ok',
+            'service': 'degraded' if (
+                stuck or stuck_signals or heartbeat_stale or startup_pending
+                or rpc_status == 'degraded') else 'ok',
             'database': 'WAL', 'live_trading_enabled': settings.live,
             'execution_adapter': settings.adapter, 'pending_signals': pending, 'open_positions': opened,
             'stuck_positions': stuck, 'stuck_signals': stuck_signals,
             'worker_heartbeat_at': heartbeat,
+            'worker_startup_pending': startup_pending,
             'worker_last_error': db.state('worker_last_error'),
             'last_processed_signal_at': db.state('last_processed_signal_at'),
-            'rpc_status': getattr(rpc, 'status', 'not_configured'),
+            'rpc_status': rpc_status,
         })
 
     app.router.add_post('/v1/signals', receive_signal)
