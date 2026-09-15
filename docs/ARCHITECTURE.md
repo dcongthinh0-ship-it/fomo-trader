@@ -18,7 +18,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 
 ## 模块职责
 
-- `settings.py`：环境/YAML、固定策略、public/Alchemy RPC 显式选择、每秒请求数/在途并发数调优与 live 凭据闭锁。
+- `settings.py`：环境/YAML、固定策略、最多 3 个活跃仓位、public/Alchemy RPC 显式选择、每秒请求数/在途并发数调优与 live 凭据闭锁。
 - `auth.py`、`models.py`、`signals.py`、`api.py`：通信认证、验证、幂等接收和健康接口。
 - `db.py`：signals/orders/positions/execution_attempts/nonce_state 持久化；签名、广播、approval 与 receipt 事实分步留痕。
 - `execution.py`、`worker.py`：适配器协议和可恢复买卖状态机。
@@ -43,11 +43,13 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 13. ERC-20/Permit2 approval 使用独立的 `APPROVAL` execution attempt；提交不确定或 receipt 超时只按原 tx hash 恢复，在确认或回滚前不得发送第二笔 approval，也不得把 approval 的 tx hash 写入 BUY/SELL 订单。
 14. worker 每 5 秒写入一次心跳并保存最近异常类型/时间；心跳超过 15 秒或存在 `POSITION_STUCK` 时 `/health` 返回 `service=degraded`，但不暴露钱包、RPC URL 或密钥。
 15. V4 只读 Router 模拟必须显式提供非零公开 `from` 地址；`TAKE_ALL` 把 `msgSender()` 作为收款人，省略 `from` 会让严格 ERC-20 以 `ERC20InvalidReceiver(0x0)` 回滚，这不是实际签名交易的路由失败。
+16. 当前买入金额为 `0.0004 ETH`（配置时约 1 美元）；最多同时存在 3 个非 `CLOSED` 仓位，`POSITION_STUCK` 继续占用名额。达到上限时新信号立即终止为 `SKIPPED/MAX_OPEN_POSITIONS`，不排队且以后不得回买；worker 同一轮仍继续检查卖出，释放名额后只允许新到达的有效信号买入。
 
 ## 数据状态
 
 - 信号：`RECEIVED → BUY_PENDING → BUY_SUBMITTED → OPEN → SELL_PENDING → SELL_SUBMITTED → CLOSED`。
 - 失败：买入终止为 `BUY_FAILED`；卖出有限重试后为 `POSITION_STUCK`，此前仓位保持 `OPEN`。
+- 放弃：信号到达时持仓已满则终止为 `SKIPPED`，原因是 `MAX_OPEN_POSITIONS`，永不回队。
 - 订单：`CREATED / SIGNED / SUBMITTED / CONFIRMED / REVERTED / FAILED / UNKNOWN`。
 
 ## 验证

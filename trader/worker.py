@@ -73,6 +73,14 @@ class TradingWorker:
                 self.db.conn.execute("UPDATE signals SET status='EXPIRED',last_error='SIGNAL_EXPIRED' WHERE event_id=?",
                                      (row['event_id'],))
             return True
+        active_positions = self.db.conn.execute(
+            "SELECT count(*) FROM positions WHERE status!='CLOSED'").fetchone()[0]
+        if active_positions >= self.settings.max_open_positions:
+            with self.db.conn:
+                self.db.conn.execute(
+                    "UPDATE signals SET status='SKIPPED',last_error='MAX_OPEN_POSITIONS' "
+                    'WHERE event_id=?', (row['event_id'],))
+            return False
         existing = self.db.conn.execute(
             "SELECT * FROM orders WHERE event_id=? AND side='BUY'", (row['event_id'],)).fetchone()
         if existing and existing['status'] != 'CREATED':

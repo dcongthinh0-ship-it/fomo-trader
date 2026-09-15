@@ -75,6 +75,10 @@ class Settings:
         self.deadline_seconds = int(os.getenv('TX_DEADLINE_SECONDS', order['tx_deadline_seconds']))
         self.price_poll_seconds = float(order.get('price_poll_seconds', 1))
         self.max_sell_attempts = int(order.get('max_sell_attempts', 3))
+        self.max_open_positions = int(os.getenv(
+            'MAX_OPEN_POSITIONS', order.get('max_open_positions', 3)))
+        if self.max_open_positions <= 0:
+            raise ValueError('MAX_OPEN_POSITIONS must be positive')
         for value in (self.buy_slippage_bps, self.sell_slippage_bps):
             if not 0 <= value < 10000:
                 raise ValueError('slippage bps must be in [0,10000)')

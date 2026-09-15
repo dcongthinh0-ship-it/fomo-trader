@@ -1,7 +1,7 @@
 chain_id: 4663
 order:
-  amount_mode: USD
-  amount: "6"
+  amount_mode: ETH
+  amount: "0.0004"
   take_profit_pct: "40"
   sell_percentage: "100"
   price_poll_seconds: 1
@@ -9,6 +9,7 @@ order:
   sell_max_slippage_bps: 500
   tx_deadline_seconds: 60
   max_sell_attempts: 3
+  max_open_positions: 3
 contracts:
   weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
   usdg: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"

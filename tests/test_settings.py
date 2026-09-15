@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from eth_account import Account
 
@@ -6,8 +8,9 @@ from trader.settings import Settings
 
 def clear(monkeypatch):
     monkeypatch.setattr('trader.settings.load_env', lambda *_: None)
-    for name in ('LIVE_TRADING_ENABLED', 'BUY_AMOUNT_MODE', 'BUY_ASSET_ADDRESS',
+    for name in ('LIVE_TRADING_ENABLED', 'BUY_AMOUNT_MODE', 'BUY_AMOUNT', 'BUY_ASSET_ADDRESS',
                  'TRADER_WALLET_ADDRESS', 'TRADER_PRIVATE_KEY_FILE',
+                 'MAX_OPEN_POSITIONS',
                  'ROBINHOOD_TRADING_RPC_PROVIDER', 'ROBINHOOD_PUBLIC_RPC_URL',
                  'ROBINHOOD_ALCHEMY_RPC_URL', 'ROBINHOOD_TRADING_RPC_REQUESTS_PER_SECOND',
                  'ROBINHOOD_TRADING_RPC_MAX_IN_FLIGHT',
@@ -18,13 +21,22 @@ def clear(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_default_is_live_disabled_and_uses_verified_usdg(monkeypatch):
+def test_default_is_live_disabled_and_uses_small_eth_order(monkeypatch):
     clear(monkeypatch)
     settings = Settings()
     assert settings.live is False
-    assert settings.buy_asset_symbol == 'USDG'
-    assert settings.buy_asset_address == '0x5fc5360d0400a0fd4f2af552add042d716f1d168'
+    assert settings.amount_mode == 'ETH'
+    assert settings.amount == Decimal('0.0004')
+    assert settings.buy_asset_symbol == 'ETH'
+    assert settings.max_open_positions == 3
     assert settings.take_profit_pct == 40
+
+
+def test_max_open_positions_must_be_positive(monkeypatch):
+    clear(monkeypatch)
+    monkeypatch.setenv('MAX_OPEN_POSITIONS', '0')
+    with pytest.raises(ValueError, match='MAX_OPEN_POSITIONS'):
+        Settings()
 
 
 def test_take_profit_is_fixed_at_40_percent(monkeypatch, tmp_path):

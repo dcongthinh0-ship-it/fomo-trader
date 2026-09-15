@@ -13,11 +13,11 @@ from trader.rpc import RPCError
 from trader.worker import TradingWorker
 
 
-def worker_settings(live=True, max_sell_attempts=3, amount='10'):
+def worker_settings(live=True, max_sell_attempts=3, amount='10', max_open_positions=3):
     return SimpleNamespace(live=live, amount=Decimal(amount), amount_mode='USD',
                            buy_slippage_bps=500, sell_slippage_bps=500,
                            wallet_address='0x' + '1' * 40, max_sell_attempts=max_sell_attempts,
-                           price_poll_seconds=1)
+                           max_open_positions=max_open_positions, price_poll_seconds=1)
 
 
 def accept(db, payload, expires=1000):
@@ -39,6 +39,52 @@ async def test_expired_signal_never_buys(db, valid_payload):
     assert await worker.buy_once(now=101)
     assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'EXPIRED'
     assert db.conn.execute('SELECT count(*) FROM orders').fetchone()[0] == 0
+
+
+async def test_signal_skipped_at_three_positions_is_never_bought_later(db, valid_payload):
+    payloads = []
+    for index in range(4):
+        payload = deepcopy(valid_payload)
+        payload['signal_id'] = format(index + 1, '064x')
+        payload['event_id'] = format(index + 11, '064x')
+        payload['token_address'] = '0x' + format(index + 21, '040x')
+        accept(db, payload)
+        payloads.append(payload)
+    for index, payload in enumerate(payloads[:3]):
+        open_position(db, payload['event_id'], payload['token_address'], 'ETH', '0.0004', '100',
+                      '0x' + format(index + 31, '064x'), now=101 + index)
+        position_status = 'POSITION_STUCK' if index == 2 else 'OPEN'
+        with db.conn:
+            db.conn.execute('UPDATE positions SET status=? WHERE event_id=?',
+                            (position_status, payload['event_id']))
+            db.conn.execute('UPDATE signals SET status=? WHERE event_id=?',
+                            (position_status, payload['event_id']))
+
+    adapter = FakeExecutionAdapter()
+    worker = TradingWorker(db, adapter, worker_settings(amount='0.0004'))
+    assert not await worker.buy_once(now=200)
+    assert db.conn.execute("SELECT count(*) FROM orders WHERE side='BUY'").fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT status FROM signals WHERE event_id=?", (payloads[3]['event_id'],)).fetchone()[0] == 'SKIPPED'
+
+    with db.conn:
+        db.conn.execute("UPDATE positions SET status='CLOSED' WHERE event_id=?",
+                        (payloads[0]['event_id'],))
+        db.conn.execute("UPDATE signals SET status='CLOSED' WHERE event_id=?",
+                        (payloads[0]['event_id'],))
+    assert not await worker.buy_once(now=201)
+    assert db.conn.execute("SELECT count(*) FROM orders WHERE side='BUY'").fetchone()[0] == 0
+
+    fresh = deepcopy(valid_payload)
+    fresh['signal_id'] = format(5, '064x')
+    fresh['event_id'] = format(15, '064x')
+    fresh['token_address'] = '0x' + format(25, '040x')
+    accept(db, fresh)
+    assert await worker.buy_once(now=202)
+    active = db.conn.execute("SELECT count(*) FROM positions WHERE status!='CLOSED'").fetchone()[0]
+    assert active == 3
+    assert db.conn.execute(
+        "SELECT status FROM signals WHERE event_id=?", (fresh['event_id'],)).fetchone()[0] == 'OPEN'
 
 
 async def test_fake_adapter_full_buy_and_40_percent_sell(db, valid_payload):
