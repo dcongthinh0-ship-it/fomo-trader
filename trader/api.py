@@ -34,6 +34,9 @@ def create_app(db, settings, rpc=None):
         heartbeat_stale = heartbeat is not None and int(time.time()) - heartbeat > 15
         startup_pending = bool(db.state('worker_startup_pending', False))
         rpc_status = getattr(rpc, 'status', 'not_configured')
+        single_buy_session = getattr(settings, 'single_buy_test_session', '')
+        single_buy_complete = bool(
+            single_buy_session and db.state(f'single_buy_test:{single_buy_session}'))
         return web.json_response({
             'service': 'degraded' if (
                 stuck or stuck_signals or heartbeat_stale or startup_pending
@@ -46,6 +49,8 @@ def create_app(db, settings, rpc=None):
             'worker_last_error': db.state('worker_last_error'),
             'last_processed_signal_at': db.state('last_processed_signal_at'),
             'rpc_status': rpc_status,
+            'single_buy_test_enabled': bool(single_buy_session),
+            'single_buy_test_completed': single_buy_complete,
         })
 
     app.router.add_post('/v1/signals', receive_signal)

@@ -99,6 +99,11 @@ class Settings:
             'MAX_OPEN_POSITIONS', order.get('max_open_positions', 3)))
         if self.max_open_positions <= 0:
             raise ValueError('MAX_OPEN_POSITIONS must be positive')
+        self.single_buy_test_session = os.getenv('SINGLE_BUY_TEST_SESSION', '').strip()
+        if (self.single_buy_test_session
+                and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,63}',
+                                     self.single_buy_test_session)):
+            raise ValueError('SINGLE_BUY_TEST_SESSION must be a safe 1-64 character identifier')
         for value in (self.buy_slippage_bps, self.sell_slippage_bps,
                       self.crash_sell_slippage_bps):
             if not 0 <= value < 10000:

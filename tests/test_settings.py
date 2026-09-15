@@ -11,6 +11,7 @@ def clear(monkeypatch):
     for name in ('LIVE_TRADING_ENABLED', 'BUY_AMOUNT_MODE', 'BUY_AMOUNT', 'BUY_ASSET_ADDRESS',
                  'TRADER_WALLET_ADDRESS', 'TRADER_PRIVATE_KEY_FILE',
                  'MAX_OPEN_POSITIONS',
+                 'SINGLE_BUY_TEST_SESSION',
                  'POSITION_RECONCILE_SECONDS',
                  'TX_MAX_FEE_MULTIPLIER',
                  'ROBINHOOD_TRADING_RPC_PROVIDER', 'ROBINHOOD_PUBLIC_RPC_URL',
@@ -37,6 +38,7 @@ def test_default_is_live_disabled_and_uses_small_eth_order(monkeypatch):
     assert settings.crash_sell_slippage_bps == 5000
     assert settings.max_fee_multiplier == 2
     assert settings.position_reconcile_seconds == 30
+    assert settings.single_buy_test_session == ''
 
 
 @pytest.mark.parametrize('value', ('0.9', '10.1'))
@@ -51,6 +53,19 @@ def test_max_open_positions_must_be_positive(monkeypatch):
     clear(monkeypatch)
     monkeypatch.setenv('MAX_OPEN_POSITIONS', '0')
     with pytest.raises(ValueError, match='MAX_OPEN_POSITIONS'):
+        Settings()
+
+
+def test_single_buy_test_session_accepts_safe_identifier(monkeypatch):
+    clear(monkeypatch)
+    monkeypatch.setenv('SINGLE_BUY_TEST_SESSION', '20260915-one-coin-tp-01')
+    assert Settings().single_buy_test_session == '20260915-one-coin-tp-01'
+
+
+def test_single_buy_test_session_rejects_unsafe_identifier(monkeypatch):
+    clear(monkeypatch)
+    monkeypatch.setenv('SINGLE_BUY_TEST_SESSION', 'bad session')
+    with pytest.raises(ValueError, match='SINGLE_BUY_TEST_SESSION'):
         Settings()
 
 

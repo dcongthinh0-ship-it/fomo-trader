@@ -33,6 +33,10 @@ class TradingWorker:
     def _emergency_state_key(event_id):
         return f'emergency_exit:{event_id}'
 
+    def _single_buy_test_state_key(self):
+        session = getattr(self.settings, 'single_buy_test_session', '')
+        return f'single_buy_test:{session}' if session else None
+
     def _clear_exit_tracking(self, event_id):
         self.db.set_state(self._quote_state_key(event_id), None)
         self.db.set_state(self._emergency_state_key(event_id), None)
@@ -49,6 +53,12 @@ class TradingWorker:
                 "UPDATE signals SET status='OPEN',last_error=NULL WHERE event_id=?",
                 (signal.event_id,))
             self.db.set_state('last_processed_signal_at', now)
+            session_key = self._single_buy_test_state_key()
+            if session_key:
+                self.db.set_state(session_key, {
+                    'completed': True, 'event_id': signal.event_id,
+                    'buy_tx_hash': tx_hash, 'confirmed_at': now,
+                })
 
     def _finalize_sell(self, event_id, proceeds, tx_hash, nonce, receipt, now):
         with self.db.conn:
@@ -143,6 +153,13 @@ class TradingWorker:
                 self.db.conn.execute("UPDATE signals SET status='EXPIRED',last_error='SIGNAL_EXPIRED' WHERE event_id=?",
                                      (row['event_id'],))
             return True
+        session_key = self._single_buy_test_state_key()
+        if session_key and self.db.state(session_key):
+            with self.db.conn:
+                self.db.conn.execute(
+                    "UPDATE signals SET status='SKIPPED',last_error='SINGLE_BUY_TEST_COMPLETE' "
+                    'WHERE event_id=?', (row['event_id'],))
+            return False
         active_positions = self.db.conn.execute(
             "SELECT count(*) FROM positions WHERE status!='CLOSED'").fetchone()[0]
         if active_positions >= self.settings.max_open_positions:

@@ -53,6 +53,7 @@ monitor outbox -> POST /v1/signals -> signals(SQLite) -> worker -> Uniswap adapt
 23. Quoter 多候选只允许把明确、不可重试的合约回滚视为该候选不可报价；HTTP 403、限流、上游失败和其他瞬时 RPC 错误必须向 worker 传播并保留 `OPEN`，不得转换成 `ZERO_QUOTE` 或消耗永久卖出失败次数。真实 `ZERO_QUOTE` 也只记录 `SELL/RETRYABLE` 并继续持仓，不得把仓位永久锁死。
 24. worker 启动时及每 30 秒用 ERC-20 `balanceOf` 对账非关闭仓位：链上余额为零时将用户手动清仓或外部清仓安全归档为 `CLOSED`；旧版错误形成的 `POSITION_STUCK/ZERO_QUOTE` 在余额仍存在时恢复为 `OPEN`；余额大于零但小于本地数量时以 `MANUAL_BALANCE_MISMATCH` 保持卡死，禁止按错误成本和数量自动卖出。存在待确认 SELL 时不得用余额对账越过 tx-hash 恢复流程。
 25. 闪崩检测只使用实时链上 Quoter 的“当前全仓可换回金额”，不用飞书市值或第三方延迟价格。跌幅达到 90% 时写入持久化 emergency latch，立即走全仓 SELL；即使下一次报价短暂反弹，直到 receipt 成功前仍继续逃生。普通止盈滑点为 5%，闪崩逃生独立允许 50% 滑点并在失败后重取报价，所有 `amountOutMinimum` 向下取整到整数 base unit 且至少为 1，避免小数 wei 使交易在构建阶段失败。
+26. `SINGLE_BUY_TEST_SESSION` 默认为空且不改变正常交易；设置为安全的唯一会话标识时，首笔 BUY receipt 确认会在同一数据库事务写入持久化会话锁。此后该会话收到的新信号立即终止为 `SKIPPED/SINGLE_BUY_TEST_COMPLETE`，即使首仓卖出或容器重启也不能再买；卖出、40% 止盈和 90% 闪崩监测继续运行。清空该环境变量即可恢复正常最多 3 仓模式，测试期间跳过的旧信号永不补买。
 
 ## 数据状态
 

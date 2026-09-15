@@ -20,7 +20,7 @@ def worker_settings(live=True, max_sell_attempts=3, amount='10', max_open_positi
                            crash_sell_drop_pct=Decimal('90'), crash_sell_slippage_bps=5000,
                            wallet_address='0x' + '1' * 40, max_sell_attempts=max_sell_attempts,
                            max_open_positions=max_open_positions, price_poll_seconds=1,
-                           position_reconcile_seconds=30)
+                           position_reconcile_seconds=30, single_buy_test_session='')
 
 
 def accept(db, payload, expires=1000):
@@ -105,6 +105,38 @@ async def test_fake_adapter_full_buy_and_40_percent_sell(db, valid_payload):
     assert db.conn.execute('SELECT status FROM positions').fetchone()[0] == 'CLOSED'
     assert db.conn.execute('SELECT status FROM signals').fetchone()[0] == 'CLOSED'
     assert db.conn.execute("SELECT count(*) FROM orders WHERE side='SELL'").fetchone()[0] == 1
+
+
+async def test_single_buy_test_session_stays_locked_after_position_closes(db, valid_payload):
+    accept(db, valid_payload)
+    settings = worker_settings()
+    settings.single_buy_test_session = 'one-coin-tp-test'
+    worker = TradingWorker(db, FakeExecutionAdapter(), settings)
+
+    assert await worker.buy_once(now=101)
+    latch = db.state('single_buy_test:one-coin-tp-test')
+    assert latch['completed'] is True
+    assert latch['event_id'] == valid_payload['event_id']
+
+    with db.conn:
+        db.conn.execute("UPDATE positions SET status='CLOSED' WHERE event_id=?",
+                        (valid_payload['event_id'],))
+        db.conn.execute("UPDATE signals SET status='CLOSED' WHERE event_id=?",
+                        (valid_payload['event_id'],))
+
+    second = deepcopy(valid_payload)
+    second['signal_id'] = format(2, '064x')
+    second['event_id'] = format(12, '064x')
+    second['token_address'] = '0x' + format(22, '040x')
+    accept(db, second)
+
+    restarted_worker = TradingWorker(db, FakeExecutionAdapter(), settings)
+    assert not await restarted_worker.buy_once(now=102)
+    row = db.conn.execute(
+        'SELECT status,last_error FROM signals WHERE event_id=?',
+        (second['event_id'],)).fetchone()
+    assert tuple(row) == ('SKIPPED', 'SINGLE_BUY_TEST_COMPLETE')
+    assert db.conn.execute("SELECT count(*) FROM orders WHERE side='BUY'").fetchone()[0] == 1
 
 
 async def test_sell_does_not_trigger_below_exact_target(db, valid_payload):
